@@ -1,0 +1,5 @@
+#!/bin/sh
+printf '%s\0' "$@" > "$FAKE_ARGS"
+cat > "$FAKE_STDIN"
+printf '%s' "$FAKE_OUT"
+exit "${FAKE_EXIT:-0}"

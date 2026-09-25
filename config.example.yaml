@@ -1,0 +1,64 @@
+# The agent reads itakeit's own config file, so both apps agree on the channel,
+# the emoji and status_claims. Copy the itakeit config and add the agent block;
+# itakeit ignores it. The fields below the agent block are itakeit's and are
+# documented in itakeit's config.example.yaml.
+channel: C0123456789
+status_claims: false
+emoji:
+  claim: [raising_hand]
+  investigating: [eyes]
+  in_progress: [construction]
+  needs_info: [question]
+  blocked: [no_entry]
+  done: [white_check_mark]
+
+agent:
+  # User ID of the itakeit bot (its profile -> ... -> Copy member ID). Its board,
+  # cards and pings are not tasks and not answers.
+  itakeit_user: U0123456789
+
+  # What the agent can do. It takes only tasks this covers and that a written reply
+  # completes, since it has no tools or system access.
+  skills: |
+    Answer questions about Go, Kubernetes and our GitOps setup. Explain error
+    messages and logs pasted into the task. Draft docs, runbooks and release notes.
+
+  # Where the model calls go.
+  # claude-code (default): the Claude Code CLI, with its login (`claude auth login`,
+  #   or CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`). Usage counts against
+  #   that Claude plan.
+  # api: the Messages API, with ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or an
+  #   `ant auth login` profile. Billed to the Console organization.
+  backend: claude-code
+
+  # The Claude Code CLI to run, for backend claude-code.
+  claude_bin: claude
+
+  # Model for triage and work. Default opus for claude-code (a CLI alias) and
+  # claude-opus-5 for api.
+  model: opus
+
+  # Files the agent knows, like a CLAUDE.md you pick: runbooks, architecture
+  # notes, conventions. Relative to this file's directory, read at startup, sent
+  # (cached) with every triage and work request, 256 KB total at most. The
+  # channel can get them quoted, so no secrets.
+  knowledge: []
+  # knowledge:
+  #   - knowledge/infra.md
+  #   - knowledge/runbooks.md
+
+  # Seconds to wait after a task is posted before considering it, so people get
+  # the first pick. 0 takes tasks immediately.
+  claim_delay_seconds: 120
+
+  # false: skip tasks someone has already claimed (or, with status_claims, holds
+  # any status on). true: take them too, as an additional owner. Tasks someone
+  # marked done are always skipped.
+  claim_owned: false
+
+  # Model calls (triage and work) running at the same time.
+  max_parallel: 2
+
+  # On start, owned tasks are rebuilt from the agent's reactions on this many of
+  # the latest channel messages. Interrupted tasks are worked on again.
+  recover_messages: 200

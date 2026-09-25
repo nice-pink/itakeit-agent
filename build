@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e
+
+mkdir -p bin/
+go test ./...
+go build -o bin/itakeit-agent ./cmd/itakeit-agent

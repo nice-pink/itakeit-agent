@@ -1,0 +1,15 @@
+bin/
+*.db
+*.db-shm
+*.db-wal
+config.yaml
+.env
+cover.out
+
+.agent/
+.claude/
+CLAUDE.local.md
+events.jsonl
+.playwright-mcp/
+.vscode
+.DS_Store
