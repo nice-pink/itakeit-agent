@@ -1,0 +1,40 @@
+:root {
+  --green: #1e8764;
+  --green-dark: #15664b;
+  --green-soft: #d8f0e3;
+  --orange: #d9722b;
+  --ink: #1b2420;
+  --muted: #56615c;
+  --bg: #fbf8ef;
+  --panel: #ffffff;
+  --line: #e4ddc9;
+  --code-bg: #14201b;
+  --code-fg: #e6f2ec;
+  --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 17px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+a { color: var(--green-dark); }
+
+code { font-family: var(--mono); font-size: 0.88em; }
+
+:not(pre) > code { background: var(--green-soft); padding: 0.05rem 0.3rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; animation: none !important; }
+}

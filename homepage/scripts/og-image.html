@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- Source for public/og-image.png (1200x630) and, with ?icon, public/apple-touch-icon.png (180x180).
+     Serve the homepage directory, open this page at that viewport size and take a screenshot. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<style>
+  :root { --green: #1e8764; --green-soft: #d8f0e3; --ink: #1b2420; --muted: #56615c; --bg: #fbf8ef; --panel: #fff;
+    --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; --mono: ui-monospace, 'SF Mono', Menlo, monospace; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { width: 1200px; height: 630px; background: var(--bg); color: var(--ink); font-family: var(--sans); overflow: hidden; }
+  .card { position: absolute; inset: 28px; border: 4px solid var(--ink); box-shadow: 12px 12px 0 var(--ink); background: var(--bg);
+    display: grid; grid-template-columns: 1fr 380px; align-items: center; padding: 0 56px 0 64px; }
+  .brand { display: flex; align-items: center; gap: 14px; font: 700 34px var(--mono); margin-bottom: 26px; }
+  .brand img { height: 48px; image-rendering: pixelated; }
+  h1 { font-size: 62px; line-height: 1.02; letter-spacing: -0.03em; font-weight: 800; margin: 0 0 26px; }
+  h1 span { color: var(--green); display: block; }
+  p { font-size: 28px; color: var(--muted); margin: 0 0 30px; }
+  .pills { display: flex; gap: 12px; }
+  .pills span { font-size: 30px; padding: 6px 16px; border: 3px solid var(--ink); background: var(--panel); box-shadow: 4px 4px 0 var(--ink); }
+  .pills span.on { background: var(--green-soft); }
+  .turtle { width: 380px; image-rendering: pixelated; }
+  .url { position: absolute; right: 56px; bottom: 30px; font: 600 24px var(--mono); color: var(--muted); }
+  body.icon { width: 180px; height: 180px; background: var(--green-soft); display: grid; place-items: center; }
+  body.icon img { width: 150px; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div>
+      <div class="brand"><img src="../public/turtle.png" alt="" /> itakeit-agent</div>
+      <h1>A teammate in your task channel. <span>It takes what it can do.</span></h1>
+      <p>Free, self-hosted Claude agent for itakeit.</p>
+      <div class="pills"><span class="on">🙋 1</span><span class="on">🚧 1</span><span class="on">✅ 1</span></div>
+    </div>
+    <img class="turtle" src="../public/turtle.png" alt="" />
+    <div class="url">itakeit-agent.nice.pink</div>
+  </div>
+  <script>
+    if (location.search.includes('icon')) {
+      document.body.className = 'icon'
+      document.body.innerHTML = '<img src="../public/turtle.png" alt="" />'
+    }
+  </script>
+</body>
+</html>
