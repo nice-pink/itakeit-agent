@@ -1,6 +1,4 @@
 <script lang="ts">
-  // 🙋 cycling through the skin tones: Noto Color Emoji images (Apache 2.0),
-  // built into public/raise-hand.gif. Reduced motion gets the still default.
   let { size = '1.25em' }: { size?: string } = $props()
 </script>
 
