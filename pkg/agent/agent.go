@@ -33,6 +33,7 @@ type API interface {
 	GetReactions(item slack.ItemRef, p slack.GetReactionsParameters) (slack.ReactedItem, error)
 	GetConversationReplies(p *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error)
 	GetConversationHistory(p *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error)
+	UpdateMessage(channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error)
 }
 
 // job is a task the agent owns. held are the status reactions it has on the task
@@ -40,7 +41,11 @@ type API interface {
 type job struct {
 	held    []task.Action
 	working bool
-	again   bool // replied to while working: run another round after this one
+	again   bool               // replied to while working: run another round after this one
+	cancel  context.CancelFunc // stops the running round
+	// resumeBy, when set, are the only users whose reply starts the next round:
+	// a fix-mode task interrupted by a restart resumes only when they say so.
+	resumeBy []string
 }
 
 func (j *job) holds(a task.Action) bool { return slices.Contains(j.held, a) }
@@ -54,7 +59,13 @@ type Agent struct {
 	meBot  string // the agent's bot ID
 	jobs   map[string]*job
 	queued map[string]bool // top-level messages waiting for or in triage
-	sem    chan struct{}
+	sem    chan struct{}   // triage and rounds without tools
+	// sessions bound the rounds with tools, running or waiting for an approval.
+	// They are separate from sem, so a round waiting for the approver never
+	// holds up triage or rounds without tools.
+	sessions  chan struct{}
+	tools     bool
+	approvals map[string]*approval // pending, by approval message ts
 
 	ctx context.Context
 	do  chan func()
@@ -67,7 +78,8 @@ type Agent struct {
 func New(api API, w worker.Worker, cfg *Config, me, meBot string) *Agent {
 	a := &Agent{api: api, work: w, cfg: cfg, emoji: cfg.Display(), me: me, meBot: meBot,
 		jobs: map[string]*job{}, queued: map[string]bool{}, sem: make(chan struct{}, cfg.Agent.MaxParallel),
-		ctx: context.Background(), do: make(chan func(), 64)}
+		sessions: make(chan struct{}, cfg.Agent.MaxSessions), tools: cfg.Agent.WorkerTools() != nil,
+		approvals: map[string]*approval{}, ctx: context.Background(), do: make(chan func(), 64)}
 	a.spawn = func(fn func() func()) { go func() { a.post(fn()) }() }
 	a.after = func(d time.Duration, f func()) { time.AfterFunc(d, func() { a.post(f) }) }
 	return a
@@ -134,6 +146,12 @@ func ackLoop(ctx context.Context, sm *socketmode.Client) <-chan slackevents.Even
 
 // Handle dispatches one Events API event. Exported for tests.
 func (a *Agent) Handle(e slackevents.EventsAPIEvent) {
+	if ev, ok := e.InnerEvent.Data.(*slackevents.ReactionAddedEvent); ok {
+		if ev.Item.Channel == a.cfg.Channel {
+			a.onReaction(ev)
+		}
+		return
+	}
 	ev, ok := e.InnerEvent.Data.(*slackevents.MessageEvent)
 	if !ok || ev.Channel != a.cfg.Channel {
 		return
@@ -150,7 +168,7 @@ func (a *Agent) Handle(e slackevents.EventsAPIEvent) {
 			return
 		}
 		if ev.ThreadTimeStamp != "" && ev.ThreadTimeStamp != ev.TimeStamp {
-			a.onReply(ev.ThreadTimeStamp, ev.BotID, ev.Text)
+			a.onReply(ev.ThreadTimeStamp, ev.User, ev.BotID, ev.Text)
 			return
 		}
 		a.onTask(ev.TimeStamp, ev.Text)
@@ -158,8 +176,24 @@ func (a *Agent) Handle(e slackevents.EventsAPIEvent) {
 }
 
 func (a *Agent) forget(ts string) {
+	if j := a.jobs[ts]; j != nil && j.cancel != nil {
+		j.cancel()
+	}
+	for _, ap := range a.approvals {
+		if ap.task == ts {
+			a.resolveApproval(ap, worker.Decision{Reason: "the task was deleted"}, "Cancelled: the task was deleted")
+		}
+	}
 	delete(a.jobs, ts)
 	delete(a.queued, ts)
+	a.cleanup(ts)
+}
+
+// cleanup drops what the worker kept for a task: its tool sessions' directory.
+func (a *Agent) cleanup(ts string) {
+	if err := a.work.Cleanup(ts); err != nil {
+		slog.Warn("cleanup", "ts", ts, "err", err)
+	}
 }
 
 // onTask waits claim_delay so people get the first pick, then triages the task.
@@ -238,9 +272,18 @@ func (a *Agent) take(ts, reason string) {
 // onReply resumes a task the agent is waiting on (needs_info or blocked) when a
 // person answers in its thread, and any owned task when the agent is mentioned.
 // Any reply during a round queues one more round, so the new reply is read.
-func (a *Agent) onReply(threadTS, botID, text string) {
+func (a *Agent) onReply(threadTS, user, botID, text string) {
 	j := a.jobs[threadTS]
 	if j == nil || botID != "" {
+		return
+	}
+	if j.resumeBy != nil {
+		if !slices.Contains(j.resumeBy, user) {
+			slog.Info("reply ignored: only the approver resumes this task", "ts", threadTS, "user", user)
+			return
+		}
+		j.resumeBy = nil
+		a.start(threadTS)
 		return
 	}
 	mentioned := strings.Contains(text, "<@"+a.me+">")
@@ -256,14 +299,22 @@ func (a *Agent) onReply(threadTS, botID, text string) {
 func (a *Agent) start(ts string) {
 	j := a.jobs[ts]
 	j.working = true
+	ctx, cancel := context.WithCancel(a.ctx)
+	j.cancel = cancel
 	a.setStatus(ts, task.InProgress)
+	slot := a.sem
+	if a.tools {
+		slot = a.sessions
+	}
+	approve := a.approveFunc(ts)
 	a.spawn(func() func() {
-		a.sem <- struct{}{}
-		defer func() { <-a.sem }()
+		defer cancel()
+		slot <- struct{}{}
+		defer func() { <-slot }()
 		transcript, err := a.transcript(ts)
 		var res worker.Result
 		if err == nil {
-			res, err = a.work.Work(a.ctx, transcript)
+			res, err = a.work.Work(ctx, worker.Task{ID: ts, Transcript: transcript, Approve: approve})
 		}
 		return func() { a.finish(ts, res, err) }
 	})
@@ -272,19 +323,23 @@ func (a *Agent) start(ts string) {
 func (a *Agent) finish(ts string, res worker.Result, err error) {
 	j := a.jobs[ts]
 	if j == nil {
-		return // deleted while working
+		a.cleanup(ts) // deleted while working: the round may have recreated its directory
+		return
 	}
-	j.working = false
+	j.working, j.cancel = false, nil
 	switch {
 	case err != nil:
 		slog.Warn("work failed", "ts", ts, "err", err)
-		res = worker.Result{Status: task.Blocked, Reply: fmt.Sprintf("I stopped on an error: %v\nMention me to retry.", err)}
+		res.Status, res.Reply = task.Blocked, fmt.Sprintf("I stopped on an error: %v\nMention me to retry.", err)
 	case strings.TrimSpace(res.Reply) == "":
-		res = worker.Result{Status: task.Blocked, Reply: "I ended up with no answer for this. It needs a human, or mention me to retry."}
+		res.Status, res.Reply = task.Blocked, "I ended up with no answer for this. It needs a human, or mention me to retry."
 	}
 	// Reply first, so itakeit's needs_info ping lands under the question. A status
-	// without its reply would claim work nobody can see.
-	if err := a.say(ts, res.Reply); err != nil {
+	// without its reply would claim work nobody can see. The footer lists the
+	// writes that ran, on the error path too; both parts are escaped before the
+	// cut, so the footer always fits.
+	f := footer(res)
+	if _, err := a.postMsg(ts, cutEscaped(escape(res.Reply), maxReply-len([]rune(f)))+f); err != nil {
 		res.Status = task.Blocked
 		a.say(ts, fmt.Sprintf("Slack rejected my reply (%v). Mention me to retry.", err))
 	}
@@ -297,26 +352,17 @@ func (a *Agent) finish(ts string, res worker.Result, err error) {
 		return
 	}
 	a.setStatus(ts, res.Status)
+	if res.Status == task.Done {
+		a.cleanup(ts)
+	}
 }
 
 // transcript renders the task and its thread for the worker. Other bots' replies
 // (itakeit's card and pings) are left out.
 func (a *Agent) transcript(ts string) (string, error) {
-	var msgs []slack.Message
-	cursor := ""
-	for {
-		page, more, next, err := a.api.GetConversationReplies(&slack.GetConversationRepliesParameters{ChannelID: a.cfg.Channel, Timestamp: ts, Cursor: cursor, Limit: 200})
-		if err != nil {
-			return "", fmt.Errorf("read thread: %w", err)
-		}
-		msgs = append(msgs, page...)
-		if !more || next == "" {
-			break
-		}
-		cursor = next
-	}
-	if len(msgs) == 0 {
-		return "", fmt.Errorf("read thread: task message %s not found", ts)
+	msgs, err := a.thread(ts)
+	if err != nil {
+		return "", err
 	}
 	var b strings.Builder
 	reporter := "<@" + msgs[0].User + ">"
@@ -333,6 +379,27 @@ func (a *Agent) transcript(ts string) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// thread reads the task message and all its replies.
+func (a *Agent) thread(ts string) ([]slack.Message, error) {
+	var msgs []slack.Message
+	cursor := ""
+	for {
+		page, more, next, err := a.api.GetConversationReplies(&slack.GetConversationRepliesParameters{ChannelID: a.cfg.Channel, Timestamp: ts, Cursor: cursor, Limit: 200})
+		if err != nil {
+			return nil, fmt.Errorf("read thread: %w", err)
+		}
+		msgs = append(msgs, page...)
+		if !more || next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(msgs) == 0 {
+		return nil, fmt.Errorf("read thread: task message %s not found", ts)
+	}
+	return msgs, nil
 }
 
 // setStatus adds the new status reaction before removing the old ones. itakeit
@@ -381,19 +448,38 @@ func (a *Agent) unreact(ts string, act task.Action) bool {
 const maxReply = 39000
 
 func (a *Agent) say(ts, text string) error {
-	text = escape(text)
-	if r := []rune(text); len(r) > maxReply {
-		text = string(r[:maxReply])
+	_, err := a.postMsg(ts, cutEscaped(escape(text), maxReply))
+	return err
+}
+
+// postMsg posts text that is already escaped in the task's thread and returns
+// the new message's ts.
+func (a *Agent) postMsg(ts, escaped string) (string, error) {
+	_, msg, err := a.api.PostMessage(a.cfg.Channel, slack.MsgOptionText(escaped, false), slack.MsgOptionTS(ts))
+	if err != nil {
+		slog.Warn("post", "ts", ts, "err", err)
+	}
+	return msg, err
+}
+
+// cutEscaped cuts escaped text to n runes without splitting an entity. It
+// runs after escaping, since escaping grows the text.
+func cutEscaped(text string, n int) string {
+	if r := []rune(text); len(r) > n {
+		text = string(r[:max(n, 0)])
 		if amp := strings.LastIndex(text, "&"); amp > strings.LastIndex(text, ";") {
 			text = text[:amp] // do not cut an entity in half
 		}
 		text += "\n…(cut off)"
 	}
-	_, _, err := a.api.PostMessage(a.cfg.Channel, slack.MsgOptionText(text, false), slack.MsgOptionTS(ts))
-	if err != nil {
-		slog.Warn("post", "ts", ts, "err", err)
-	}
-	return err
+	return text
+}
+
+// escapeLiteral makes &, < and > literal without restoring references, for
+// text that is not the model's reply, such as a tool's input: <@U123> in a
+// command is shown as written and pings nobody.
+func escapeLiteral(text string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
 }
 
 var reference = regexp.MustCompile(`&lt;([@#][UWC][A-Z0-9]+(?:\|[^&]*)?)&gt;`)
@@ -450,10 +536,111 @@ func (a *Agent) Recover() {
 			continue
 		}
 		a.jobs[m.Timestamp] = &job{held: held}
-		if !slices.Contains(held, task.Done) && !slices.Contains(held, task.NeedsInfo) && !slices.Contains(held, task.Blocked) {
-			slog.Info("recover: resuming", "ts", m.Timestamp)
-			a.start(m.Timestamp)
+		switch {
+		case !slices.Contains(held, task.Done) && !slices.Contains(held, task.NeedsInfo) && !slices.Contains(held, task.Blocked):
+			a.recoverRound(m.Timestamp)
+		case a.fix() && (slices.Contains(held, task.NeedsInfo) || slices.Contains(held, task.Blocked)):
+			a.rearmResume(m.Timestamp)
 		}
 	}
 	slog.Info("recovered", "tasks", len(a.jobs))
+}
+
+func (a *Agent) fix() bool { return a.cfg.Agent.Mode == string(worker.ModeFix) }
+
+// resumeAsk and humanNow mark what Recover posts, so a later restart finds it
+// and keeps the gate.
+const (
+	resumeAsk = "reply here to have me resume, or say what to do instead."
+	humanNow  = "writes may already have run: see the notices above. It needs a human now."
+)
+
+// recoverRound handles a task whose round the restart interrupted. Approval
+// requests of that round can no longer be answered, so they are marked
+// expired. In propose mode nothing can have been changed, and the round runs
+// again. In fix mode writes may already have run, so the task waits until the
+// approver (the reporter when there is none) says to resume.
+func (a *Agent) recoverRound(ts string) {
+	msgs, err := a.thread(ts)
+	if err != nil {
+		slog.Warn("recover: thread", "ts", ts, "err", err)
+	}
+	for _, m := range msgs {
+		if m.User == a.me && pendingApproval(m.Text) {
+			text := m.Text[:strings.LastIndex(m.Text, "\n")] + "\nExpired (agent restarted)"
+			if _, _, _, err := a.api.UpdateMessage(a.cfg.Channel, m.Timestamp, slack.MsgOptionText(text, false)); err != nil {
+				slog.Warn("recover: expire approval", "msg", m.Timestamp, "err", err)
+			}
+		}
+	}
+	if !a.fix() {
+		slog.Info("recover: resuming", "ts", ts)
+		a.start(ts)
+		return
+	}
+	who := a.resumer(msgs)
+	a.jobs[ts].resumeBy = []string{who} // [""] when unknown: nobody's reply resumes it
+	if who == "" {
+		// No approver, and the reporter is a bot or unknown: a human takes over.
+		a.say(ts, "I was restarted during this task, and "+humanNow)
+		a.setStatus(ts, task.Blocked)
+		return
+	}
+	slog.Info("recover: asking to resume", "ts", ts, "who", who)
+	if _, err := a.postMsg(ts, fmt.Sprintf("I was restarted during this task, and writes may already have run: see the notices and approvals above. <@%s>: %s", who, resumeAsk)); err != nil {
+		// Without the question in the thread a later restart could not find the
+		// gate again, so the task goes to a human instead.
+		a.jobs[ts].resumeBy = []string{""}
+		a.setStatus(ts, task.Blocked)
+		return
+	}
+	a.setStatus(ts, task.NeedsInfo)
+}
+
+// rearmResume keeps the resume gate across a later restart. It looks at the
+// agent's last message: the resume question means the task only resumes for
+// the user it names, and resumes now if that user already answered while the
+// agent was down; the hand-over notice means nobody's reply resumes it.
+func (a *Agent) rearmResume(ts string) {
+	msgs, err := a.thread(ts)
+	if err != nil {
+		slog.Warn("recover: thread", "ts", ts, "err", err)
+		a.jobs[ts].resumeBy = []string{""} // cannot tell: fail closed
+		return
+	}
+	last := -1
+	for i := len(msgs) - 1; i > 0 && last < 0; i-- {
+		if msgs[i].User == a.me {
+			last = i
+		}
+	}
+	switch {
+	case last < 0:
+	case strings.Contains(msgs[last].Text, humanNow):
+		a.jobs[ts].resumeBy = []string{""}
+	case strings.Contains(msgs[last].Text, resumeAsk):
+		who := a.resumer(msgs)
+		if slices.ContainsFunc(msgs[last+1:], func(m slack.Message) bool { return m.User == who }) {
+			slog.Info("recover: resume already approved", "ts", ts, "who", who)
+			a.start(ts)
+			return
+		}
+		a.jobs[ts].resumeBy = []string{who}
+	}
+}
+
+// resumer is who may resume an interrupted fix-mode task: the approver, or
+// without one the reporter.
+func (a *Agent) resumer(msgs []slack.Message) string {
+	if a.cfg.Agent.Approver != "" || len(msgs) == 0 || msgs[0].BotID != "" {
+		return a.cfg.Agent.Approver // a bot reporter cannot answer: its replies are ignored
+	}
+	return msgs[0].User
+}
+
+// pendingApproval reports an approval request the agent posted that has no
+// outcome yet: its last line still asks for a reaction.
+func pendingApproval(text string) bool {
+	i := strings.LastIndex(text, "\n")
+	return i > 0 && strings.Contains(text, " approval needed (write ") && strings.HasPrefix(text[i+1:], "React :")
 }

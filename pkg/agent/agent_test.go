@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,30 +24,50 @@ const (
 
 // fakeAPI keeps reactions per message and records every call in order.
 type fakeAPI struct {
+	mu        sync.Mutex // work runs off the loop in the approval tests
 	calls     []string
 	reactions map[string][]slack.ItemReaction // ts -> reactions
 	threads   map[string][]slack.Message
 	history   []slack.Message
 	failPost  bool
 	failRm    map[string]bool // reaction names whose removal fails
+	posts     int
+	botRoot   bool              // the task message was posted by a bot
+	failRead  bool              // GetConversationReplies fails
+	updates   map[string]string // message ts -> text after UpdateMessage
 }
 
 func newFake() *fakeAPI {
-	return &fakeAPI{reactions: map[string][]slack.ItemReaction{}, threads: map[string][]slack.Message{}}
+	return &fakeAPI{reactions: map[string][]slack.ItemReaction{}, threads: map[string][]slack.Message{}, updates: map[string]string{}}
 }
 
 func (f *fakeAPI) PostMessage(ch string, opts ...slack.MsgOption) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	_, vals, _ := slack.UnsafeApplyMsgOptions("", ch, "", opts...)
 	ts := vals.Get("thread_ts")
 	f.calls = append(f.calls, "post "+ts+" "+vals.Get("text"))
 	if f.failPost {
 		return "", "", errors.New("rate_limited")
 	}
-	f.threads[ts] = append(f.threads[ts], slack.Message{Msg: slack.Msg{User: me, Text: vals.Get("text")}})
-	return ch, "900.1", nil
+	f.posts++
+	msgTS := fmt.Sprintf("900.%d", f.posts)
+	f.threads[ts] = append(f.threads[ts], slack.Message{Msg: slack.Msg{User: me, Text: vals.Get("text"), Timestamp: msgTS}})
+	return ch, msgTS, nil
+}
+
+func (f *fakeAPI) UpdateMessage(ch, ts string, opts ...slack.MsgOption) (string, string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, vals, _ := slack.UnsafeApplyMsgOptions("", ch, "", opts...)
+	f.calls = append(f.calls, "update "+ts+" "+vals.Get("text"))
+	f.updates[ts] = vals.Get("text")
+	return ch, ts, vals.Get("text"), nil
 }
 
 func (f *fakeAPI) AddReaction(name string, item slack.ItemRef) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "+"+name)
 	rs := f.reactions[item.Timestamp]
 	for i := range rs {
@@ -63,6 +84,8 @@ func (f *fakeAPI) AddReaction(name string, item slack.ItemRef) error {
 }
 
 func (f *fakeAPI) RemoveReaction(name string, item slack.ItemRef) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "-"+name)
 	if f.failRm[name] {
 		return errors.New("rate_limited")
@@ -78,15 +101,27 @@ func (f *fakeAPI) RemoveReaction(name string, item slack.ItemRef) error {
 }
 
 func (f *fakeAPI) GetReactions(item slack.ItemRef, _ slack.GetReactionsParameters) (slack.ReactedItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return slack.ReactedItem{Reactions: f.reactions[item.Timestamp]}, nil
 }
 
 func (f *fakeAPI) GetConversationReplies(p *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failRead {
+		return nil, false, "", errors.New("ratelimited")
+	}
 	root := slack.Message{Msg: slack.Msg{User: "UREP", Text: "task " + p.Timestamp, Timestamp: p.Timestamp}}
+	if f.botRoot {
+		root.User, root.BotID = "UBOTAPP", "BINTEGRATION"
+	}
 	return append([]slack.Message{root}, f.threads[p.Timestamp]...), false, "", nil
 }
 
 func (f *fakeAPI) GetConversationHistory(*slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return &slack.GetConversationHistoryResponse{Messages: f.history}, nil
 }
 
@@ -95,7 +130,23 @@ type fakeWorker struct {
 	take        bool
 	results     []worker.Result
 	transcripts []string
+	ids         []string
+	cleaned     []string
 	onTriage    func()
+	onWork      func(context.Context, worker.Task) (worker.Result, error)
+	mu          sync.Mutex // Work runs off the loop in the approval tests
+}
+
+// rounds is how many rounds Work ran, safe to read while one runs.
+func (w *fakeWorker) rounds() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.transcripts)
+}
+
+func (w *fakeWorker) Cleanup(id string) error {
+	w.cleaned = append(w.cleaned, id)
+	return nil
 }
 
 func (w *fakeWorker) Triage(context.Context, string) (bool, string, error) {
@@ -105,8 +156,14 @@ func (w *fakeWorker) Triage(context.Context, string) (bool, string, error) {
 	return w.take, "I can answer this.", nil
 }
 
-func (w *fakeWorker) Work(_ context.Context, transcript string) (worker.Result, error) {
-	w.transcripts = append(w.transcripts, transcript)
+func (w *fakeWorker) Work(ctx context.Context, t worker.Task) (worker.Result, error) {
+	if w.onWork != nil {
+		return w.onWork(ctx, t)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.transcripts = append(w.transcripts, t.Transcript)
+	w.ids = append(w.ids, t.ID)
 	if len(w.results) == 0 {
 		return worker.Result{}, errors.New("no result left")
 	}
@@ -416,5 +473,28 @@ func TestRejectedReplyExplained(t *testing.T) {
 	a.Handle(msg("1.0", "", "UREP", "x"))
 	if !slices.ContainsFunc(api.calls, func(c string) bool { return strings.Contains(c, "Slack rejected my reply (rate_limited)") }) {
 		t.Fatalf("calls = %v", api.calls)
+	}
+}
+
+// The worker keeps a directory per task for tool sessions: it gets the task's
+// ts, and drops the directory once the task is done or deleted, not while the
+// task waits for an answer.
+func TestTaskIDAndCleanup(t *testing.T) {
+	a, _, w := setup(t, "")
+	w.results = []worker.Result{{Status: task.NeedsInfo, Reply: "Which env?"}, {Status: task.Done, Reply: "Done."}}
+	a.Handle(msg("1.0", "", "UREP", "fix it"))
+	if !slices.Equal(w.ids, []string{"1.0"}) || len(w.cleaned) != 0 {
+		t.Fatalf("after needs_info: ids = %v, cleaned = %v", w.ids, w.cleaned)
+	}
+	a.Handle(msg("1.1", "1.0", "UREP", "prod"))
+	if !slices.Equal(w.cleaned, []string{"1.0"}) {
+		t.Fatalf("after done: cleaned = %v", w.cleaned)
+	}
+	w.results = []worker.Result{{Status: task.NeedsInfo, Reply: "?"}}
+	a.Handle(msg("2.0", "", "UREP", "other"))
+	a.Handle(slackevents.EventsAPIEvent{InnerEvent: slackevents.EventsAPIInnerEvent{
+		Data: &slackevents.MessageEvent{Channel: channel, SubType: "message_deleted", DeletedTimeStamp: "2.0"}}})
+	if !slices.Equal(w.cleaned, []string{"1.0", "2.0"}) {
+		t.Fatalf("after delete: cleaned = %v", w.cleaned)
 	}
 }

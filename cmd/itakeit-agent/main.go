@@ -7,10 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -33,6 +35,12 @@ func main() {
 }
 
 func run(cfgPath string, debug bool) error {
+	if err := hideEnviron(); err != nil {
+		slog.Warn("could not hide this process's environment from its children", "err", err)
+	}
+	if err := subreaper(); err != nil {
+		slog.Warn("could not become a subreaper: processes a tool session leaves behind are not reaped", "err", err)
+	}
 	cfg, err := agent.Load(cfgPath)
 	if err != nil {
 		return err
@@ -48,6 +56,9 @@ func run(cfgPath string, debug bool) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Agent.Approver != "" && cfg.Agent.Approver == auth.UserID {
+		return errors.New("agent.approver is the agent's own user: approvals must come from a person")
+	}
 	if auth.UserID == cfg.Agent.ItakeitUser {
 		return errors.New("the agent's tokens belong to the itakeit app: create a separate Slack app for the agent, itakeit ignores its own reactions")
 	}
@@ -60,7 +71,7 @@ func run(cfgPath string, debug bool) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	w, err := newWorker(ctx, cfg.Agent, dir)
+	w, err := newWorker(ctx, cfg.Agent, dir, botToken, appToken)
 	if ctx.Err() != nil {
 		return nil // stopped during startup: not a failure
 	}
@@ -72,22 +83,47 @@ func run(cfgPath string, debug bool) error {
 	return agent.New(api, w, cfg, auth.UserID, auth.BotID).Run(ctx, sm)
 }
 
-func newWorker(ctx context.Context, s agent.Settings, dir string) (worker.Worker, error) {
+// newWorker builds the worker. secret are the Slack tokens, removed from
+// everything posted in case a tool finds them.
+func newWorker(ctx context.Context, s agent.Settings, dir string, secret ...string) (worker.Worker, error) {
 	var w *worker.Claude
 	if s.Backend == agent.BackendAPI {
 		w = worker.NewAPI(s.Model, s.Skills)
 	} else {
-		email, err := claudeLogin(ctx, s.ClaudeBin)
+		email, err := claudeLogin(ctx, s.ClaudeBin, s.Env)
 		if err != nil {
 			return nil, err
 		}
-		w = worker.NewClaudeCode(s.ClaudeBin, s.Model, s.Skills, dir, email)
+		t := s.WorkerTools()
+		if t != nil {
+			slog.Info("work rounds get tools", "mode", t.Mode, "read", s.Tools.Read, "write", s.Tools.Write, "mcp_servers", slices.Sorted(maps.Keys(s.MCPServers)), "approver", s.Approver, "work_timeout_minutes", s.WorkTimeoutMinutes, "max_sessions", s.MaxSessions)
+			switch {
+			case t.Mode == worker.ModeFix && s.Approver == "":
+				slog.Warn("fix mode without approver: anyone in the channel can trigger write entries")
+			case t.Mode == worker.ModePropose && s.Approver != "":
+				slog.Warn("agent.approver has no effect in propose mode, which never writes")
+			}
+			if s.Approver != "" && s.AllowUnapprovedWrites {
+				slog.Warn("agent.allow_unapproved_writes has no effect with an approver: every write needs the approval")
+			}
+			for _, e := range t.Read {
+				if e.Broad() {
+					slog.Warn("a read entry names a whole program, which reaches all of its subcommands: name the subcommand", "entry", e.String())
+				}
+			}
+		}
+		if w, err = worker.NewClaudeCode(s.ClaudeBin, s.Model, s.Skills, dir, s.Env, t, append(secret, email)...); err != nil {
+			return nil, err
+		}
 	}
 	w.Knowledge = s.KnowledgeText
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	refused, err := w.Probe(ctx)
 	if err != nil {
+		if s.Backend == agent.BackendClaudeCode {
+			return nil, fmt.Errorf("agent.backend %s, model %q: %w (the CLI gets only an allow-listed environment: list any variable it needs, such as Bedrock or Vertex credentials, in agent.env)", s.Backend, s.Model, err)
+		}
 		return nil, fmt.Errorf("agent.backend %s, model %q: %w", s.Backend, s.Model, err)
 	}
 	slog.Info("model ready", "backend", s.Backend, "model", s.Model, "knowledge_files", len(s.Knowledge), "knowledge_bytes", len(s.KnowledgeText), "scrubbed_strings", w.Secrets(), "probe_refused", refused)
@@ -104,11 +140,11 @@ func newWorker(ctx context.Context, s agent.Settings, dir string) (worker.Worker
 // It returns the login's email when auth status reports it (a `claude auth
 // login`, not a CLAUDE_CODE_OAUTH_TOKEN), which the CLI shows the model and which
 // is therefore removed from replies. The startup probe tries to find it for either.
-func claudeLogin(ctx context.Context, bin string) (string, error) {
+func claudeLogin(ctx context.Context, bin string, env []string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "auth", "status")
-	cmd.Env = worker.CLIEnv()
+	cmd.Env = worker.CLIEnv(env)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("agent.backend claude-code: `%s auth status` failed (%w): install Claude Code and run `claude auth login`, or set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`", bin, err)

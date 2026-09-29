@@ -17,8 +17,8 @@ agent:
   # cards and pings are not tasks and not answers.
   itakeit_user: U0123456789
 
-  # What the agent can do. It takes only tasks this covers and that a written reply
-  # completes, since it has no tools or system access.
+  # What the agent can do. It takes only tasks this covers. Without tools (below)
+  # that also means tasks a written reply completes, since it has no system access.
   skills: |
     Answer questions about Go, Kubernetes and our GitOps setup. Explain error
     messages and logs pasted into the task. Draft docs, runbooks and release notes.
@@ -55,6 +55,33 @@ agent:
   # any status on). true: take them too, as an additional owner. Tasks someone
   # marked done are always skipped.
   claim_owned: false
+
+  # Tools for work rounds (backend claude-code only, see README "Tools").
+  # propose (default): investigate with read entries, propose what a human
+  # should change. fix: also run write entries, each posted before it runs and,
+  # with an approver, run only after that user's reaction.
+  # mode: propose
+  # approver: U0123456789
+  # tools:
+  #   read:
+  #     - Read
+  #     - "Bash(kubectl get *)"
+  #   write:
+  #     - "Bash(kubectl rollout restart *)"
+  # approval_timeout_minutes: 30
+  # work_timeout_minutes: 15
+  # max_sessions: 2
+  # mcp_servers:
+  #   github:
+  #     type: stdio
+  #     command: github-mcp-server
+  #     args: [stdio]
+  #     env: [GITHUB_PERSONAL_ACCESS_TOKEN]
+
+  # Extra environment variables for the claude CLI. It gets only what it needs
+  # (PATH, HOME, proxies, CLAUDE_CODE_*, ...), never the Slack tokens. List
+  # anything else it should see here.
+  env: []
 
   # Model calls (triage and work) running at the same time.
   max_parallel: 2

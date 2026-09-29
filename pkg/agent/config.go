@@ -4,11 +4,15 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/nice-pink/itakeit-agent/pkg/worker"
 	"github.com/nice-pink/itakeit/pkg/config"
 	"github.com/nice-pink/itakeit/pkg/task"
 	"gopkg.in/yaml.v3"
@@ -37,6 +41,59 @@ type Settings struct {
 	// fills KnowledgeText.
 	Knowledge     []string `yaml:"knowledge"`
 	KnowledgeText string   `yaml:"-"`
+	// Env names extra variables passed to the claude CLI, which otherwise gets
+	// only the few it needs (worker.CLIEnv).
+	Env []string `yaml:"env"`
+	// Mode, Tools and the rest give work rounds tools (claude-code only). Parse
+	// fills ToolEntries and WriteEntries from Tools.
+	Mode  string `yaml:"mode"`
+	Tools struct {
+		Read  []string `yaml:"read"`
+		Write []string `yaml:"write"`
+	} `yaml:"tools"`
+	// Approver is the Slack user whose reaction every write needs in fix mode.
+	Approver              string `yaml:"approver"`
+	AllowUnapprovedWrites bool   `yaml:"allow_unapproved_writes"`
+	ApprovalEmoji         struct {
+		Approve string `yaml:"approve"`
+		Deny    string `yaml:"deny"`
+	} `yaml:"approval_emoji"`
+	ApprovalTimeoutMinutes int `yaml:"approval_timeout_minutes"`
+	WorkTimeoutMinutes     int `yaml:"work_timeout_minutes"`
+	// MCPServers are started or connected to for tool rounds; entries name
+	// their tools as mcp__<server>__<tool>.
+	MCPServers map[string]MCPServer `yaml:"mcp_servers"`
+	// MaxSessions bounds tool rounds, running or waiting for approval.
+	MaxSessions  int            `yaml:"max_sessions"`
+	ToolEntries  []worker.Entry `yaml:"-"`
+	WriteEntries []worker.Entry `yaml:"-"`
+}
+
+// MCPServer is one agent.mcp_servers entry. Env and Headers name variables of
+// the agent's environment, whose values reach the server through mcp.json.
+type MCPServer struct {
+	Type    string            `yaml:"type"`
+	Command string            `yaml:"command"`
+	Args    []string          `yaml:"args"`
+	Env     []string          `yaml:"env"`
+	URL     string            `yaml:"url"`
+	Headers map[string]string `yaml:"headers"` // header name: variable holding its value
+}
+
+// WorkerTools is the tool setup for the worker, nil when no tools are listed.
+func (s Settings) WorkerTools() *worker.Tools {
+	if len(s.ToolEntries)+len(s.WriteEntries) == 0 {
+		return nil
+	}
+	t := &worker.Tools{Mode: worker.Mode(s.Mode), Read: s.ToolEntries, Write: s.WriteEntries, Approval: s.Approver != "",
+		WorkTimeout: time.Duration(s.WorkTimeoutMinutes) * time.Minute}
+	if len(s.MCPServers) > 0 {
+		t.MCP = map[string]worker.MCPServer{}
+		for name, m := range s.MCPServers {
+			t.MCP[name] = worker.MCPServer{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
+		}
+	}
+	return t
 }
 
 // maxKnowledge caps the knowledge files, since they are sent with every call.
@@ -127,13 +184,184 @@ func Parse(raw []byte) (*Config, error) {
 	if s.ClaimDelaySeconds < 0 || s.MaxParallel < 0 || s.RecoverMessages < 0 {
 		return nil, errors.New("config: agent.claim_delay_seconds, max_parallel and recover_messages must be positive")
 	}
+	for _, name := range s.Env {
+		if !envName.MatchString(name) {
+			return nil, fmt.Errorf("config: agent.env: %q is not a variable name", name)
+		}
+		// Compared in upper case: names are case-sensitive on Linux and macOS, but
+		// Windows folds them.
+		if up := strings.ToUpper(name); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" {
+			return nil, fmt.Errorf("config: agent.env must not pass %s to the claude CLI", name)
+		}
+	}
 	if s.MaxParallel == 0 {
 		s.MaxParallel = 2
+	}
+	if err := parseTools(&s, base.Emoji); err != nil {
+		return nil, err
 	}
 	if s.RecoverMessages == 0 {
 		s.RecoverMessages = 200
 	}
 	return &Config{Config: base, Agent: s}, nil
+}
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+var slackUser = regexp.MustCompile(`^[UW][A-Z0-9]{2,}$`)
+
+// headerName is an HTTP header field name (RFC 9110 token).
+var headerName = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+// mcpServerName has no underscores, so mcp__<server>__<tool> splits cleanly.
+var mcpServerName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// checkMCP validates the MCP servers and the entries that name their tools.
+func checkMCP(s *Settings) error {
+	for name, m := range s.MCPServers {
+		if !mcpServerName.MatchString(name) {
+			return fmt.Errorf("config: agent.mcp_servers: %q must be lowercase letters, digits and dashes (no underscores)", name)
+		}
+		switch m.Type {
+		case "stdio":
+			if m.Command == "" || m.URL != "" || len(m.Headers) > 0 {
+				return fmt.Errorf("config: agent.mcp_servers.%s: stdio needs command, and no url or headers", name)
+			}
+			// The CLI starts a server in the task's directory, which rounds can
+			// write to: a relative command would run a file a round wrote there.
+			if strings.Contains(m.Command, "/") && !filepath.IsAbs(m.Command) {
+				return fmt.Errorf("config: agent.mcp_servers.%s: command must be absolute or a name on PATH", name)
+			}
+		case "http":
+			u, err := url.Parse(m.URL)
+			if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || m.Command != "" || len(m.Env) > 0 {
+				return fmt.Errorf("config: agent.mcp_servers.%s: http needs an https:// url with a host and no credentials in it (use headers), and no command or env", name)
+			}
+			for h := range m.Headers {
+				if !headerName.MatchString(h) {
+					return fmt.Errorf("config: agent.mcp_servers.%s: %q is not a header name", name, h)
+				}
+			}
+		default:
+			return fmt.Errorf("config: agent.mcp_servers.%s: type must be stdio or http", name)
+		}
+		vars := slices.Clone(m.Env)
+		for _, v := range m.Headers {
+			vars = append(vars, v)
+		}
+		for _, v := range vars {
+			if !envName.MatchString(v) {
+				return fmt.Errorf("config: agent.mcp_servers.%s: %q is not a variable name", name, v)
+			}
+			if up := strings.ToUpper(v); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" {
+				return fmt.Errorf("config: agent.mcp_servers.%s must not pass %s", name, v)
+			}
+			// A variable the CLI gets anyway (agent.env, CLAUDE_CODE_*, proxies ...)
+			// would sit in its environment, where a Bash tool can print it.
+			if slices.Contains(s.Env, v) || worker.CLIPasses(v) {
+				return fmt.Errorf("config: agent.mcp_servers.%s: %s also reaches the CLI's environment (agent.env or always passed), which would expose it to the CLI's tools: use another variable", name, v)
+			}
+		}
+	}
+	if len(s.MCPServers) > 0 && len(s.ToolEntries)+len(s.WriteEntries) == 0 {
+		return errors.New("config: agent.mcp_servers needs agent.tools entries: without them no round has tools")
+	}
+	for _, e := range append(slices.Clone(s.ToolEntries), s.WriteEntries...) {
+		if srv := e.MCPServer(); srv != "" {
+			if _, ok := s.MCPServers[srv]; !ok {
+				return fmt.Errorf("config: agent.tools: %s names server %s, which agent.mcp_servers does not configure", e, srv)
+			}
+		}
+	}
+	return nil
+}
+
+// parseTools checks the tool settings. emoji are itakeit's status emoji, which
+// the approval emoji must not collide with.
+func parseTools(s *Settings, emoji map[task.Action][]string) error {
+	switch s.Mode {
+	case "", string(worker.ModePropose):
+		s.Mode = string(worker.ModePropose)
+	case string(worker.ModeFix):
+	default:
+		return fmt.Errorf("config: agent.mode must be %q or %q, got %q", worker.ModePropose, worker.ModeFix, s.Mode)
+	}
+	for _, raw := range s.Tools.Read {
+		e, err := worker.ParseEntry(raw, false)
+		if err != nil {
+			return fmt.Errorf("config: agent.tools.read: %w", err)
+		}
+		s.ToolEntries = append(s.ToolEntries, e)
+	}
+	for _, raw := range s.Tools.Write {
+		e, err := worker.ParseEntry(raw, true)
+		if err != nil {
+			return fmt.Errorf("config: agent.tools.write: %w", err)
+		}
+		for _, r := range s.ToolEntries {
+			if worker.Covers(r, e) {
+				return fmt.Errorf("config: agent.tools: read entry %s also covers write entry %s, which would then run without approval: narrow the read entry", r, e)
+			}
+		}
+		if e.NeedsApprover() && s.Approver == "" {
+			return fmt.Errorf("config: agent.tools.write: %s can run anything, so it needs agent.approver", e)
+		}
+		s.WriteEntries = append(s.WriteEntries, e)
+	}
+	if s.Backend != BackendClaudeCode && (len(s.ToolEntries)+len(s.WriteEntries) > 0 || s.Approver != "" || s.Mode == string(worker.ModeFix) || len(s.MCPServers) > 0) {
+		return fmt.Errorf("config: agent.tools, agent.mcp_servers, agent.approver and mode fix need backend %s: the API backend has no tools", BackendClaudeCode)
+	}
+	if err := checkMCP(s); err != nil {
+		return err
+	}
+	if s.Mode == string(worker.ModeFix) {
+		switch {
+		case len(s.WriteEntries) == 0:
+			return errors.New("config: agent.mode fix needs agent.tools.write: the changes the agent may make")
+		case s.Approver == "" && !s.AllowUnapprovedWrites:
+			return errors.New("config: fix mode without approver lets anyone in the channel trigger write entries: set agent.approver, or agent.allow_unapproved_writes: true")
+		}
+	}
+	if s.Approver != "" {
+		if !slackUser.MatchString(s.Approver) {
+			return fmt.Errorf("config: agent.approver must be a Slack member ID (U... or W...), got %q", s.Approver)
+		}
+		if s.Approver == s.ItakeitUser {
+			return errors.New("config: agent.approver cannot be the itakeit bot")
+		}
+	}
+	s.ApprovalEmoji.Approve = cmp.Or(s.ApprovalEmoji.Approve, "heavy_check_mark")
+	s.ApprovalEmoji.Deny = cmp.Or(s.ApprovalEmoji.Deny, "x")
+	if s.ApprovalEmoji.Approve == s.ApprovalEmoji.Deny {
+		return errors.New("config: agent.approval_emoji.approve and .deny must differ")
+	}
+	for act, names := range emoji {
+		for _, e := range []string{s.ApprovalEmoji.Approve, s.ApprovalEmoji.Deny} {
+			if slices.Contains(names, e) {
+				return fmt.Errorf("config: agent.approval_emoji %s is itakeit's %s emoji: approving would change the task's status", e, act)
+			}
+		}
+	}
+	switch {
+	case s.ApprovalTimeoutMinutes == 0:
+		s.ApprovalTimeoutMinutes = 30
+	case s.ApprovalTimeoutMinutes < 1 || s.ApprovalTimeoutMinutes > 40:
+		// 40: the CLI was verified to keep a permission request open that long.
+		return errors.New("config: agent.approval_timeout_minutes must be between 1 and 40")
+	}
+	switch {
+	case s.WorkTimeoutMinutes == 0:
+		s.WorkTimeoutMinutes = 15
+	case s.WorkTimeoutMinutes < 1 || s.WorkTimeoutMinutes > 120:
+		return errors.New("config: agent.work_timeout_minutes must be between 1 and 120")
+	}
+	switch {
+	case s.MaxSessions == 0:
+		s.MaxSessions = s.MaxParallel
+	case s.MaxSessions < 0:
+		return errors.New("config: agent.max_sessions must be positive")
+	}
+	return nil
 }
 
 func (c *Config) ClaimDelay() time.Duration {

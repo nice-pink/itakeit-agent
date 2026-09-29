@@ -1,5 +1,35 @@
 #!/bin/sh
 printf '%s\0' "$@" > "$FAKE_ARGS"
+case " $* " in
+*" --input-format stream-json "*)
+	# A stream session plays $FAKE_SCRIPT, one command per line:
+	#   out <json>  print a stdout line
+	#   in          read one stdin line and append it to $FAKE_STDIN
+	#   sleep <s>   wait
+	#   child       start a sleep in its own process group, pid to $FAKE_CHILD
+	#   exit <n>    exit
+	pwd > "$FAKE_ARGS.pwd"
+	echo "$HOME" > "$FAKE_ARGS.home"
+	echo "${CLAUDE_CONFIG_DIR:-unset}" > "$FAKE_ARGS.ccd"
+	while IFS= read -r line <&3; do
+		case "$line" in
+		"out "*) printf '%s\n' "${line#out }" ;;
+		in) IFS= read -r got && printf '%s\n' "$got" >> "$FAKE_STDIN" ;;
+		"sleep "*) sleep "${line#sleep }" ;;
+		child)
+			# setsid where it exists (Linux); set -m elsewhere (macOS sh). busybox
+			# and dash ignore set -m without a tty.
+			if command -v setsid >/dev/null; then setsid sleep 300 & else set -m; sleep 300 & set +m; fi
+			c=$!
+			sleep 0.2
+			if [ -r "/proc/$c/stat" ]; then pg=$(cut -d' ' -f5 "/proc/$c/stat"); else pg=$(ps -o pgid= -p "$c" | tr -d ' '); fi
+			echo "$c $pg $$" > "$FAKE_CHILD" ;;
+		"exit "*) exit "${line#exit }" ;;
+		esac
+	done 3< "$FAKE_SCRIPT"
+	exit 0
+	;;
+esac
 cat > "$FAKE_STDIN"
 printf '%s' "$FAKE_OUT"
 exit "${FAKE_EXIT:-0}"

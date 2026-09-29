@@ -53,7 +53,7 @@ func serve(t *testing.T, stop string, blocks ...string) (*Claude, *map[string]an
 
 func TestWorkRequestAndResult(t *testing.T) {
 	c, body := serve(t, "end_turn", `{"status":"needs_info","reply":" Which env? "}`)
-	res, err := c.Work(context.Background(), "Task reported by <@U1>:\nfix it")
+	res, err := c.Work(context.Background(), Task{Transcript: "Task reported by <@U1>:\nfix it"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestWorkRequestAndResult(t *testing.T) {
 
 func TestWorkRefusalBlocks(t *testing.T) {
 	c, _ := serve(t, "refusal")
-	res, err := c.Work(context.Background(), "x")
+	res, err := c.Work(context.Background(), Task{Transcript: "x"})
 	if err != nil || res.Status != task.Blocked {
 		t.Fatalf("res = %+v, err = %v", res, err)
 	}
@@ -86,7 +86,7 @@ func TestWorkRefusalBlocks(t *testing.T) {
 
 func TestWorkRejectsUnknownStatus(t *testing.T) {
 	c, _ := serve(t, "end_turn", `{"status":"in_progress","reply":"x"}`)
-	if _, err := c.Work(context.Background(), "x"); err == nil {
+	if _, err := c.Work(context.Background(), Task{Transcript: "x"}); err == nil {
 		t.Fatal("accepted a status the schema does not allow")
 	}
 }
@@ -104,7 +104,7 @@ func TestTriage(t *testing.T) {
 
 func TestWorkParsesAnswerAfterFallback(t *testing.T) {
 	c, _ := serve(t, "end_turn", `{"status":"do`, "<fallback>", `{"status":"done",`, `"reply":"ok"}`)
-	res, err := c.Work(context.Background(), "x")
+	res, err := c.Work(context.Background(), Task{Transcript: "x"})
 	if err != nil || res.Status != task.Done || res.Reply != "ok" {
 		t.Fatalf("res = %+v, err = %v", res, err)
 	}
@@ -112,7 +112,7 @@ func TestWorkParsesAnswerAfterFallback(t *testing.T) {
 
 func TestWorkMaxTokensFails(t *testing.T) {
 	c, _ := serve(t, "max_tokens", `{"status":"done","re`)
-	if _, err := c.Work(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "cut off") {
+	if _, err := c.Work(context.Background(), Task{Transcript: "x"}); err == nil || !strings.Contains(err.Error(), "cut off") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -135,7 +135,7 @@ func TestAPIProbe(t *testing.T) {
 func TestAPIKnowledgeInCachedSystem(t *testing.T) {
 	c, body := serve(t, "end_turn", `{"status":"done","reply":"ok"}`)
 	c.Knowledge = "===== infra.md =====\nProd is poma-prod."
-	if _, err := c.Work(context.Background(), "which namespace?"); err != nil {
+	if _, err := c.Work(context.Background(), Task{Transcript: "which namespace?"}); err != nil {
 		t.Fatal(err)
 	}
 	sys := (*body)["system"].([]any)[0].(map[string]any)
