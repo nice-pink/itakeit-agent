@@ -41,7 +41,7 @@ agent:
 
 ## Tools
 
-With `agent.tools`, work rounds can investigate before they answer, and in fix mode make changes. The design, with the CLI behaviour it was verified against, is `docs/impl/PLAN_tool-worker_1790663497.md`.
+With `agent.tools`, work rounds can investigate before they answer, and in fix mode make changes. It relies on Claude Code CLI behaviour verified on the version the image pins (`CLAUDE_CODE_VERSION`), which `ITAKEIT_LIVE=1 go test ./pkg/worker -run Live` checks again.
 
 - `mode: propose` (the default): the agent reads with the read entries and proposes what a human should change. Write entries are never shown to the model.
 - `mode: fix`: the agent also runs write entries to complete the task. Each write is posted in the task thread before it runs. With `approver`, it runs only after that user reacts to it. Without one, fix mode needs `allow_unapproved_writes: true`, since anyone in the channel can then trigger the write entries.
