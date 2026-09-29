@@ -112,7 +112,7 @@
 
         <div class="thread" aria-live="polite">
           <div class="msg">
-            <div class="avatar bot"><img src="./turtle.png" alt="" /></div>
+            <div class="avatar bot"><img src="./turtle-parrot.png" alt="" /></div>
             <div class="body">
               <div class="meta"><b>itakeit</b> <span class="app">APP</span></div>
               <p><b>Status:</b> {status === '✅' ? '✅ done' : status === '⛔' ? '⛔ blocked' : status === '🚧' ? '🚧 in progress' : ''}{#if step > 0 && !['✅', '⛔', '🚧'].includes(status)}<RaiseHand /> claimed{:else if step === 0}⚪ unclaimed{/if}<br /><b>Owners:</b> {step > 0 ? '@itakeit-agent' : 'nobody yet'}</p>
@@ -125,7 +125,7 @@
                 <p class="tool"><span>behind the scenes, allowed as a read entry:</span> <code>{m.text}</code></p>
               {:else}
                 <div class="msg">
-                  <div class="avatar agent"><img src="./turtle.png" alt="" /></div>
+                  <div class="avatar agent"><img src="./turtle-parrot.png" alt="" /></div>
                   <div class="body">
                     <div class="meta"><b>itakeit-agent</b> <span class="app">APP</span></div>
                     <p>{m.text}</p>
@@ -138,7 +138,7 @@
 
           {#if asking}
             <div class="msg">
-              <div class="avatar agent"><img src="./turtle.png" alt="" /></div>
+              <div class="avatar agent"><img src="./turtle-parrot.png" alt="" /></div>
               <div class="body">
                 <div class="meta"><b>itakeit-agent</b> <span class="app">APP</span></div>
                 <p><span class="mention">@you</span> approval needed (write 1 of max 20). Tool: <code>Bash</code></p>
@@ -153,7 +153,7 @@
             </div>
             {#if approval !== 'pending'}
               <div class="msg">
-                <div class="avatar agent"><img src="./turtle.png" alt="" /></div>
+                <div class="avatar agent"><img src="./turtle-parrot.png" alt="" /></div>
                 <div class="body">
                   <div class="meta"><b>itakeit-agent</b> <span class="app">APP</span></div>
                   {#if approval === 'approved'}

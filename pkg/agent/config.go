@@ -27,7 +27,12 @@ type Config struct {
 }
 
 type Settings struct {
+	// ItakeitUser (the itakeit bot's member ID) or ItakeitApp (the itakeit
+	// app's App ID) identifies itakeit's own messages, so its board and cards
+	// are not taken for tasks. Slack shows no member ID for an app, so the App
+	// ID is the one people can find; one of the two is required.
 	ItakeitUser       string `yaml:"itakeit_user"`
+	ItakeitApp        string `yaml:"itakeit_app"`
 	Backend           string `yaml:"backend"`
 	ClaudeBin         string `yaml:"claude_bin"`
 	Model             string `yaml:"model"`
@@ -191,8 +196,13 @@ func Parse(raw []byte) (*Config, error) {
 		}
 	}
 	s := file.Agent
-	if s.ItakeitUser == "" {
-		return nil, errors.New("config: agent.itakeit_user is required (the itakeit bot's user ID, so its board and cards are not taken for tasks)")
+	switch {
+	case s.ItakeitUser == "" && s.ItakeitApp == "":
+		return nil, errors.New("config: agent.itakeit_app is required (the itakeit app's App ID, A..., from api.slack.com/apps -> itakeit -> Basic Information), so its board and cards are not taken for tasks. agent.itakeit_user, the itakeit bot's member ID, works instead")
+	case s.ItakeitApp != "" && !slackApp.MatchString(s.ItakeitApp):
+		return nil, fmt.Errorf("config: agent.itakeit_app must be a Slack App ID (A...), got %q", s.ItakeitApp)
+	case s.ItakeitUser != "" && !slackUser.MatchString(s.ItakeitUser):
+		return nil, fmt.Errorf("config: agent.itakeit_user must be a Slack member ID (U... or W...), got %q: for the App ID (A...) use agent.itakeit_app", s.ItakeitUser)
 	}
 	if s.Skills == "" {
 		return nil, errors.New("config: agent.skills is required (what the agent can do, used to decide which tasks to take)")
@@ -260,6 +270,8 @@ func parseMemory(s *Settings) error {
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var slackUser = regexp.MustCompile(`^[UW][A-Z0-9]{2,}$`)
+
+var slackApp = regexp.MustCompile(`^A[A-Z0-9]{2,}$`)
 
 // headerName is an HTTP header field name (RFC 9110 token).
 var headerName = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")

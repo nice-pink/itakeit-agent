@@ -166,7 +166,7 @@ func (a *Agent) Handle(e slackevents.EventsAPIEvent) {
 			a.forget(ev.Message.Timestamp)
 		}
 	case "", "bot_message", "file_share", "thread_broadcast":
-		if ev.User == a.me || (ev.BotID != "" && ev.BotID == a.meBot) || ev.User == a.cfg.Agent.ItakeitUser {
+		if ev.User == a.me || (ev.BotID != "" && ev.BotID == a.meBot) || a.fromItakeit(ev) {
 			return
 		}
 		if ev.ThreadTimeStamp != "" && ev.ThreadTimeStamp != ev.TimeStamp {
@@ -175,6 +175,16 @@ func (a *Agent) Handle(e slackevents.EventsAPIEvent) {
 		}
 		a.onTask(ev.TimeStamp, ev.Text)
 	}
+}
+
+// fromItakeit reports a message itakeit posted: by its bot's member ID, or by
+// the App ID in the message's bot_profile.
+func (a *Agent) fromItakeit(ev *slackevents.MessageEvent) bool {
+	s := a.cfg.Agent
+	if s.ItakeitUser != "" && ev.User == s.ItakeitUser {
+		return true
+	}
+	return s.ItakeitApp != "" && ev.Message != nil && ev.Message.BotProfile != nil && ev.Message.BotProfile.AppID == s.ItakeitApp
 }
 
 func (a *Agent) forget(ts string) {
@@ -503,6 +513,24 @@ func unescape(text string) string {
 }
 
 func (a *Agent) ref(ts string) slack.ItemRef { return slack.NewRefToMessage(a.cfg.Channel, ts) }
+
+// CheckChannel reads one message of the channel, so a channel the agent
+// cannot read stops it at startup. Otherwise it would run and ignore every
+// event, since each is compared against the configured channel.
+func CheckChannel(api API, channel string) error {
+	_, err := api.GetConversationHistory(&slack.GetConversationHistoryParameters{ChannelID: channel, Limit: 1})
+	switch {
+	case err == nil:
+		return nil
+	case err.Error() == "channel_not_found":
+		return fmt.Errorf("channel %s not found: set channel in the config to the ID of itakeit's channel (in Slack: the channel's name -> About -> Channel ID), the same as in itakeit's config. A private channel needs the agent invited first", channel)
+	case err.Error() == "not_in_channel":
+		return fmt.Errorf("the agent is not in channel %s: run /invite @<the agent's app> in it", channel)
+	case err.Error() == "missing_scope":
+		return fmt.Errorf("reading channel %s: missing_scope: the agent's app needs channels:history (and groups:history for a private channel), see slack-app-manifest.yaml", channel)
+	}
+	return fmt.Errorf("reading channel %s: %w", channel, err)
+}
 
 // Recover rebuilds the owned tasks from the agent's own reactions in the last
 // recover_messages channel messages, so no database is needed. Tasks that were

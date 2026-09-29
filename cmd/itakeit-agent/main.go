@@ -74,10 +74,13 @@ func run(cfgPath string, debug bool) error {
 	if cfg.Agent.Approver != "" && cfg.Agent.Approver == auth.UserID {
 		return errors.New("agent.approver is the agent's own user: approvals must come from a person")
 	}
-	if auth.UserID == cfg.Agent.ItakeitUser {
+	if auth.UserID == cfg.Agent.ItakeitUser || (cfg.Agent.ItakeitApp != "" && appTokenApp(appToken) == cfg.Agent.ItakeitApp) {
 		return errors.New("the agent's tokens belong to the itakeit app: create a separate Slack app for the agent, itakeit ignores its own reactions")
 	}
 	slog.Info("authenticated", "team", auth.Team, "agent_user", auth.UserID, "channel", cfg.Channel, "backend", cfg.Agent.Backend, "model", cfg.Agent.Model)
+	if err := agent.CheckChannel(api, cfg.Channel); err != nil {
+		return err
+	}
 
 	dir, err := os.MkdirTemp("", "itakeit-agent-")
 	if err != nil {
@@ -177,6 +180,16 @@ func claudeLogin(ctx context.Context, bin string, env []string) (string, error) 
 	}
 	slog.Info("claude code login", "method", st.AuthMethod)
 	return st.Email, nil
+}
+
+// appTokenApp is the App ID an app-level token belongs to: they read
+// xapp-1-<App ID>-<number>-<secret>. auth.test reports no App ID, and bots.info
+// would need users:read.
+func appTokenApp(token string) string {
+	if parts := strings.Split(token, "-"); len(parts) >= 3 && parts[0] == "xapp" {
+		return parts[2]
+	}
+	return ""
 }
 
 var errMissingTokens = errors.New("set AGENT_SLACK_BOT_TOKEN (xoxb-...) and AGENT_SLACK_APP_TOKEN (xapp-...) from the agent's own Slack app")

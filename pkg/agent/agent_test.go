@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -24,17 +25,18 @@ const (
 
 // fakeAPI keeps reactions per message and records every call in order.
 type fakeAPI struct {
-	mu        sync.Mutex // work runs off the loop in the approval tests
-	calls     []string
-	reactions map[string][]slack.ItemReaction // ts -> reactions
-	threads   map[string][]slack.Message
-	history   []slack.Message
-	failPost  bool
-	failRm    map[string]bool // reaction names whose removal fails
-	posts     int
-	botRoot   bool              // the task message was posted by a bot
-	failRead  bool              // GetConversationReplies fails
-	updates   map[string]string // message ts -> text after UpdateMessage
+	mu         sync.Mutex // work runs off the loop in the approval tests
+	calls      []string
+	reactions  map[string][]slack.ItemReaction // ts -> reactions
+	threads    map[string][]slack.Message
+	history    []slack.Message
+	failPost   bool
+	failRm     map[string]bool // reaction names whose removal fails
+	posts      int
+	botRoot    bool              // the task message was posted by a bot
+	failRead   bool              // GetConversationReplies fails
+	updates    map[string]string // message ts -> text after UpdateMessage
+	historyErr error             // GetConversationHistory fails with it
 }
 
 func newFake() *fakeAPI {
@@ -134,6 +136,9 @@ func (f *fakeAPI) GetConversationReplies(p *slack.GetConversationRepliesParamete
 func (f *fakeAPI) GetConversationHistory(*slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.historyErr != nil {
+		return nil, f.historyErr
+	}
 	return &slack.GetConversationHistoryResponse{Messages: f.history}, nil
 }
 
@@ -508,5 +513,50 @@ func TestTaskIDAndCleanup(t *testing.T) {
 		Data: &slackevents.MessageEvent{Channel: channel, SubType: "message_deleted", DeletedTimeStamp: "2.0"}}})
 	if !slices.Equal(w.cleaned, []string{"1.0", "2.0"}) {
 		t.Fatalf("after delete: cleaned = %v", w.cleaned)
+	}
+}
+
+// Slack shows an app no member ID, so itakeit is also known by its App ID,
+// which every message it posts carries in bot_profile.
+func TestSkipsItakeitByAppID(t *testing.T) {
+	cfg, err := Parse([]byte(fmt.Sprintf("channel: %s\nagent:\n  itakeit_app: AITAKEIT\n  skills: answering questions\n", channel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, w := newFake(), &fakeWorker{take: true, results: []worker.Result{{Status: task.Done, Reply: "ok"}}}
+	a := New(api, w, cfg, me, "BAGENT")
+	a.spawn = func(fn func() func()) { fn()() }
+	a.after = func(_ time.Duration, f func()) { f() }
+	// Raw Events API JSON through slack-go's parser, which fills Message (and
+	// its bot_profile) for a plain message: the match relies on that.
+	botMsg := func(ts, user, app string) slackevents.EventsAPIEvent {
+		raw := fmt.Sprintf(`{"type":"event_callback","event":{"type":"message","channel":%q,"ts":%q,"user":%q,"bot_id":"B%s","text":"board","bot_profile":{"app_id":%q}}}`, channel, ts, user, app, app)
+		e, err := slackevents.ParseEvent(json.RawMessage(raw), slackevents.OptionNoVerifyToken())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	a.Handle(botMsg("1.0", "UITAKEITBOT", "AITAKEIT"))
+	if len(api.calls) != 0 || len(a.jobs) != 0 {
+		t.Fatalf("took itakeit's message: calls = %v", api.calls)
+	}
+	// Another integration's message, with no user, is still a task.
+	a.Handle(botMsg("2.0", "", "AALERTS"))
+	if a.jobs["2.0"] == nil {
+		t.Fatalf("integration task not taken: calls = %v", api.calls)
+	}
+}
+
+func TestCheckChannel(t *testing.T) {
+	api := newFake()
+	if err := CheckChannel(api, channel); err != nil {
+		t.Fatal(err)
+	}
+	for code, want := range map[string]string{"channel_not_found": "Channel ID", "not_in_channel": "/invite", "missing_scope": "channels:history", "ratelimited": "ratelimited"} {
+		api.historyErr = slack.SlackErrorResponse{Err: code}
+		if err := CheckChannel(api, channel); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v", code, err)
+		}
 	}
 }

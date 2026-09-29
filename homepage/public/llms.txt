@@ -27,7 +27,7 @@ It runs as one Docker container on Claude, through the Claude Code CLI and its l
 
 1. Run itakeit in the channel (https://itakeit.nice.pink).
 2. Create a separate Slack app from the manifest in the repository (scopes: channels:history, groups:history, chat:write, reactions:read, reactions:write; events: message.channels, message.groups, reaction_added). Generate an app-level token with connections:write (AGENT_SLACK_APP_TOKEN) and install the app (AGENT_SLACK_BOT_TOKEN).
-3. Invite it to the channel and add an agent block (itakeit_user, skills) to itakeit's config.yaml.
+3. Invite it to the channel and add an agent block (itakeit_app, the itakeit app's App ID; skills) to itakeit's config.yaml.
 4. Run claude setup-token for CLAUDE_CODE_OAUTH_TOKEN, or use backend: api with ANTHROPIC_API_KEY.
 5. Build the image from the repository and run it with the tokens and the config mounted.
 

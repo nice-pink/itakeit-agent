@@ -24,13 +24,13 @@ func TestExampleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Agent.ItakeitUser == "" || c.ClaimDelay().Seconds() != 120 || c.Agent.MaxParallel != 2 {
+	if c.Agent.ItakeitApp == "" || c.ClaimDelay().Seconds() != 120 || c.Agent.MaxParallel != 2 {
 		t.Fatalf("agent = %+v", c.Agent)
 	}
 }
 
 func TestConfigRequiresAgentFields(t *testing.T) {
-	for _, raw := range []string{"channel: C1\n", "channel: C1\nagent:\n  itakeit_user: U1\n"} {
+	for _, raw := range []string{"channel: C1\n", "channel: C1\nagent:\n  itakeit_user: U11\n"} {
 		if _, err := Parse([]byte(raw)); err == nil || !strings.Contains(err.Error(), "agent.") {
 			t.Errorf("%q: err = %v", raw, err)
 		}
@@ -38,14 +38,14 @@ func TestConfigRequiresAgentFields(t *testing.T) {
 }
 
 func TestConfigRequiresStatusEmoji(t *testing.T) {
-	raw := "channel: C1\nemoji:\n  claim: [raising_hand]\n  done: [white_check_mark]\nagent:\n  itakeit_user: U1\n  skills: x\n"
+	raw := "channel: C1\nemoji:\n  claim: [raising_hand]\n  done: [white_check_mark]\nagent:\n  itakeit_user: U11\n  skills: x\n"
 	if _, err := Parse([]byte(raw)); err == nil || !strings.Contains(err.Error(), "in_progress") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestConfigBackendDefaults(t *testing.T) {
-	base := "channel: C1\nagent:\n  itakeit_user: U1\n  skills: x\n"
+	base := "channel: C1\nagent:\n  itakeit_user: U11\n  skills: x\n"
 	c, err := Parse([]byte(base))
 	if err != nil || c.Agent.Backend != BackendClaudeCode || c.Agent.Model != "opus" || c.Agent.ClaudeBin != "claude" {
 		t.Fatalf("default: %+v, %v", c.Agent, err)
@@ -70,7 +70,7 @@ func TestKnowledgeFiles(t *testing.T) {
 	write("big.md", strings.Repeat("x", maxKnowledge+1))
 	cfg := func(files string) string {
 		p := filepath.Join(dir, "config.yaml")
-		write("config.yaml", "channel: C1\nagent:\n  itakeit_user: U1\n  skills: x\n  knowledge: ["+files+"]\n")
+		write("config.yaml", "channel: C1\nagent:\n  itakeit_user: U11\n  skills: x\n  knowledge: ["+files+"]\n")
 		return p
 	}
 
@@ -102,7 +102,7 @@ func TestKnowledgeFiles(t *testing.T) {
 }
 
 func TestConfigEnv(t *testing.T) {
-	base := "channel: C1\nagent:\n  itakeit_user: U1\n  skills: x\n  env: "
+	base := "channel: C1\nagent:\n  itakeit_user: U11\n  skills: x\n  env: "
 	if c, err := Parse([]byte(base + "[KUBECONFIG, https_proxy]\n")); err != nil || len(c.Agent.Env) != 2 {
 		t.Fatalf("valid: %+v, %v", c, err)
 	}
@@ -114,7 +114,7 @@ func TestConfigEnv(t *testing.T) {
 }
 
 func TestConfigTools(t *testing.T) {
-	base := "channel: C1\nagent:\n  itakeit_user: U1\n  skills: x\n"
+	base := "channel: C1\nagent:\n  itakeit_user: U11\n  skills: x\n"
 	c, err := Parse([]byte(base))
 	if err != nil || c.Agent.WorkerTools() != nil || c.Agent.Mode != "propose" {
 		t.Fatalf("no tools: %+v, %v", c.Agent, err)
@@ -215,7 +215,7 @@ func TestConfigMCP(t *testing.T) {
 }
 
 func TestConfigMemory(t *testing.T) {
-	base := "channel: C1\nagent:\n  itakeit_user: U1\n  skills: x\n"
+	base := "channel: C1\nagent:\n  itakeit_user: U11\n  skills: x\n"
 	c, err := Parse([]byte(base))
 	if err != nil || c.Agent.Memory.Enabled || c.Agent.Memory.NeedsApproval() {
 		t.Fatalf("off by default: %+v, %v", c.Agent.Memory, err)
@@ -247,11 +247,29 @@ func TestConfigMemory(t *testing.T) {
 func TestLoadMemoryDir(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("channel: C1\nagent:\n  itakeit_user: U1\n  skills: x\n  memory:\n    enabled: true\n    approval: false\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("channel: C1\nagent:\n  itakeit_user: U11\n  skills: x\n  memory:\n    enabled: true\n    approval: false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	c, err := Load(path)
 	if err != nil || c.Agent.Memory.Dir != filepath.Join(dir, "memory") {
 		t.Fatalf("dir = %q, %v", c.Agent.Memory.Dir, err)
+	}
+}
+
+func TestConfigItakeitIdentity(t *testing.T) {
+	base := "channel: C1\nagent:\n  skills: x\n"
+	c, err := Parse([]byte(base + "  itakeit_app: A0ITAKEIT\n"))
+	if err != nil || c.Agent.ItakeitApp != "A0ITAKEIT" {
+		t.Fatalf("app id alone: %+v, %v", c, err)
+	}
+	for name, raw := range map[string]string{
+		"neither":        "",
+		"app id as user": "  itakeit_user: A0ITAKEIT\n",
+		"user id as app": "  itakeit_app: U0ITAKEIT\n",
+		"bot id as app":  "  itakeit_app: B0ITAKEIT\n",
+	} {
+		if _, err := Parse([]byte(base + raw)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

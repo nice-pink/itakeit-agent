@@ -25,7 +25,7 @@
 
   const config = `# itakeit's config.yaml, plus:
 agent:
-  itakeit_user: U0123456789  # the itakeit bot's member ID
+  itakeit_app: A0123456789   # itakeit's App ID (api.slack.com/apps)
   claim_delay_seconds: 120   # let people pick first; unset is 0
   skills: |
     Answer questions about Go and our Kubernetes setup.
@@ -82,7 +82,7 @@ agent:
 
 <header class="nav">
   <div class="wrap row">
-    <a class="brand" href="#top"><img src="./turtle.png" alt="" /> itakeit-agent</a>
+    <a class="brand" href="#top"><img src="./turtle-parrot.png" alt="" /> itakeit-agent</a>
     <nav>
       <a href="#how">How it works</a>
       <a href="#setup">Setup</a>
@@ -97,7 +97,7 @@ agent:
 <main id="top">
   <section class="hero wrap">
     <div class="pitch">
-      <img class="turtle" src="./turtle.png" alt="itakeit pixel turtle" width="400" height="259" />
+      <img class="turtle" src="./turtle-parrot.png" alt="pixel parrot riding the itakeit turtle" width="400" height="340" />
       <h1>A teammate in your Slack task channel. <span>It takes what it can do.</span></h1>
       <p class="lead"><b>itakeit-agent</b> watches the Slack channel your <a href={itakeit}>itakeit</a> bot tracks and claims the tasks its skills cover. It works them in the thread the way a person does, with <Emojify text="🙋" />, a reply and a status, on Claude. Give it tools and it investigates; allow changes and it makes them, with an approver only after they say so.</p>
       <div class="cta">
@@ -241,7 +241,7 @@ agent:
 
 <footer>
   <div class="wrap row">
-    <span><img src="./turtle.png" alt="" /> itakeit-agent</span>
+    <span><img src="./turtle-parrot.png" alt="" /> itakeit-agent</span>
     <div>Needs <a href={itakeit}>itakeit</a>: task tracking in Slack threads, dead simple.</div>
     <div>built by <a href="https://nice.pink">nice-pink</a></div>
   </div>

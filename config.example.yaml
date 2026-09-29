@@ -13,9 +13,13 @@ emoji:
   done: [white_check_mark]
 
 agent:
-  # User ID of the itakeit bot (its profile -> ... -> Copy member ID). Its board,
-  # cards and pings are not tasks and not answers.
-  itakeit_user: U0123456789
+  # The itakeit app's App ID, so its board, cards and pings are not taken for
+  # tasks or answers. Slack shows an app no member ID; the App ID is on
+  # api.slack.com/apps -> itakeit -> Basic Information -> App ID.
+  itakeit_app: A0123456789
+  # Or the itakeit bot's member ID, which auth.test with itakeit's bot token
+  # returns as user_id:
+  # itakeit_user: U0123456789
 
   # What the agent can do. It takes only tasks this covers. Without tools (below)
   # that also means tasks a written reply completes, since it has no system access.
