@@ -45,6 +45,21 @@ func run(cfgPath string, debug bool) error {
 	if err != nil {
 		return err
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// Memory is checked first: the image without poma-memory fails here, before
+	// anything else, with the name of the image to run instead.
+	var mem *worker.Memory
+	if m := cfg.Agent.Memory; m.Enabled {
+		mem = worker.NewMemory(m.Bin, m.Dir, m.Results)
+		if err := mem.Check(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil // stopped during startup: not a failure
+			}
+			return err
+		}
+		slog.Info("memory ready", "dir", m.Dir, "results", m.Results, "approval", m.NeedsApproval())
+	}
 	botToken, appToken := os.Getenv("AGENT_SLACK_BOT_TOKEN"), os.Getenv("AGENT_SLACK_APP_TOKEN")
 	if !strings.HasPrefix(botToken, "xoxb-") || !strings.HasPrefix(appToken, "xapp-") {
 		return errMissingTokens
@@ -64,14 +79,12 @@ func run(cfgPath string, debug bool) error {
 	}
 	slog.Info("authenticated", "team", auth.Team, "agent_user", auth.UserID, "channel", cfg.Channel, "backend", cfg.Agent.Backend, "model", cfg.Agent.Model)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	dir, err := os.MkdirTemp("", "itakeit-agent-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	w, err := newWorker(ctx, cfg.Agent, dir, botToken, appToken)
+	w, err := newWorker(ctx, cfg.Agent, dir, mem, botToken, appToken)
 	if ctx.Err() != nil {
 		return nil // stopped during startup: not a failure
 	}
@@ -80,12 +93,16 @@ func run(cfgPath string, debug bool) error {
 	}
 
 	sm := socketmode.New(api, socketmode.OptionDebug(debug))
-	return agent.New(api, w, cfg, auth.UserID, auth.BotID).Run(ctx, sm)
+	a := agent.New(api, w, cfg, auth.UserID, auth.BotID)
+	if mem != nil {
+		a.WithMemory(mem) // not a nil *Memory in the interface
+	}
+	return a.Run(ctx, sm)
 }
 
 // newWorker builds the worker. secret are the Slack tokens, removed from
 // everything posted in case a tool finds them.
-func newWorker(ctx context.Context, s agent.Settings, dir string, secret ...string) (worker.Worker, error) {
+func newWorker(ctx context.Context, s agent.Settings, dir string, mem *worker.Memory, secret ...string) (worker.Worker, error) {
 	var w *worker.Claude
 	if s.Backend == agent.BackendAPI {
 		w = worker.NewAPI(s.Model, s.Skills)
@@ -100,7 +117,7 @@ func newWorker(ctx context.Context, s agent.Settings, dir string, secret ...stri
 			switch {
 			case t.Mode == worker.ModeFix && s.Approver == "":
 				slog.Warn("fix mode without approver: anyone in the channel can trigger write entries")
-			case t.Mode == worker.ModePropose && s.Approver != "":
+			case t.Mode == worker.ModePropose && s.Approver != "" && !s.Memory.NeedsApproval():
 				slog.Warn("agent.approver has no effect in propose mode, which never writes")
 			}
 			if s.Approver != "" && s.AllowUnapprovedWrites {
@@ -117,6 +134,7 @@ func newWorker(ctx context.Context, s agent.Settings, dir string, secret ...stri
 		}
 	}
 	w.Knowledge = s.KnowledgeText
+	w.Memory = mem
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	refused, err := w.Probe(ctx)

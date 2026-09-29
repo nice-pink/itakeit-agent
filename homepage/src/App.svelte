@@ -55,6 +55,18 @@ agent:
       env: [GITHUB_PERSONAL_ACCESS_TOKEN]
   env: [KUBECONFIG]`
 
+  const memory = `agent:
+  approver: U0123456789   # saves each learning with their ✔️
+  memory:
+    enabled: true
+    dir: memory           # next to config.yaml, writable
+    results: 3            # notes added to a request, at most
+    approval: true        # default; false saves unreviewed`
+
+  const memoryBuild = `docker build -f itakeit-agent/Dockerfile.mem -t itakeit-agent-mem itakeit-agent`
+
+  const memoryRun = `docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" -v itakeit-memory:/config/memory itakeit-agent-mem`
+
   const usage = [
     ['anyone', 'posts a task in the channel', 'after claim_delay_seconds (0 unless set; the example config uses 120), if nobody took it, the agent asks Claude whether its skills cover it'],
     ['agent', 'takes the task', 'reacts 🙋, says in the thread what it will do, reacts 🚧, works it, replies, then sets ✅, ❓ or ⛔'],
@@ -63,6 +75,7 @@ agent:
     ['anyone', 'replies on a ⛔ task, or mentions the agent on any task it owns', 'another round starts, even on a done task'],
     ['anyone', 'replies while a round runs', 'one more round runs after it, so the reply is read'],
     ['approver', 'reacts ✔️ or ❌ on an approval request', 'the change runs, or is denied and the agent says so. Nobody else’s reaction counts.'],
+    ['approver', 'reacts ✔️ or ❌ on a learning request (with memory)', 'the learning is saved to memory, or dropped. Nobody else’s reaction counts.'],
     ['anyone', 'deletes the task message', 'the round stops and its pending approvals are cancelled'],
   ]
 </script>
@@ -74,6 +87,7 @@ agent:
       <a href="#how">How it works</a>
       <a href="#setup">Setup</a>
       <a href="#tools">Tools</a>
+      <a href="#memory">Memory</a>
       <a href="#usage">Usage</a>
       <a href={repo}>GitHub</a>
     </nav>
@@ -188,6 +202,24 @@ agent:
         <Code code={tools} label="config.yaml (agent block)" />
       </div>
     </div>
+  </section>
+
+  <section id="memory" class="wrap setup">
+    <h2>Memory</h2>
+    <p class="sub">An advanced, additional feature. Off by default, and it runs only in the separate <code>itakeit-agent-mem</code> image. Everything above works without it.</p>
+    <div class="split">
+      <div class="points">
+        <p><b>A separate image.</b> <code>Dockerfile.mem</code> builds the agent with <a href="https://github.com/poma-ai/poma-memory">poma-memory</a> and its small embedding model: local search, no API key, nothing downloaded at run time. The regular image refuses to start with memory enabled and names the image to run instead. It works with every mode and both backends.</p>
+        <p><b>It looks before it works.</b> Before triage and every round, the agent searches its memory for the task and adds the notes that match to the request. They are marked as notes from earlier Slack threads: hints to check, never instructions, and kept apart from your trusted knowledge files.</p>
+        <p><b>It learns from done tasks.</b> When a task ends ✅, the agent can propose what it learned. With approval, the default, it posts the learning in the thread and saves it only after the approver’s ✔️; ❌ drops it. Requests are signed, so a reply made to look like one saves nothing, and they still count after a restart.</p>
+        <p><b>Plain Markdown.</b> Learnings go to <code>learnings/YYYY-MM.md</code> in the memory directory, next to any runbooks or notes you add there yourself. The search index is a SQLite file the agent rebuilds from the Markdown, so the Markdown is what to back up.</p>
+        <p><b>Strict about relevance.</b> When nothing matches well, it adds nothing rather than the best bad match. At startup it checks that this filter works and refuses to start otherwise.</p>
+      </div>
+      <Code code={memory} label="config.yaml (agent block)" />
+    </div>
+    <p>Build the memory image and run it with a writable volume for the memory directory:</p>
+    <Code code={memoryBuild} label="shell" />
+    <Code code={memoryRun} label="shell" />
   </section>
 
   <section id="usage" class="wrap setup">

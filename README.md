@@ -39,6 +39,29 @@ agent:
 - Together the files are capped at 256 KB (about 64K tokens of English, fewer bytes per token for other scripts). A few pages is the sweet spot.
 - Anyone in the channel can get the model to quote them, so keep secrets and anything the channel's members should not read out of them.
 
+## Memory
+
+With `agent.memory`, the agent remembers what finished tasks taught it and looks it up for new ones. The memory is a directory of Markdown files, indexed and searched with [poma-memory](https://github.com/poma-ai/poma-memory) (hybrid keyword and local semantic search, no API key). It needs the `itakeit-agent-mem` image (`Dockerfile.mem`), or `poma-memory[semantic]` 0.4.0 or later on `PATH` when run outside a container.
+
+```yaml
+agent:
+  approver: U0123456789   # reacts to save each learning
+  memory:
+    enabled: true
+    dir: memory           # relative to this file's directory, must be writable
+    bin: poma-memory      # absolute, or a name on PATH
+    results: 3            # notes added to a request at most, 1 to 10
+    approval: true        # default; false saves learnings unreviewed
+```
+
+- Before every triage and work round, the agent searches the memory with the task (for a work round: the start of the transcript) and appends what matches to the user message, inside `<memory>`. The model decides whether a note fits. A failed search is logged and the request goes without notes.
+- Notes go in the user message, not in the system prompt with `knowledge`: they were written from Slack threads, so the prompt gives them the trust of the thread, which is none as instructions. Put facts you vouch for in `knowledge`.
+- A work round that ends ✅ can return a learning: one to three sentences a later task would need. With `approval` (the default), the agent posts it in the task thread and saves it only when `approver` reacts with the approve emoji; the deny emoji drops it. The request carries the text, its task and a signature over both (HMAC-SHA256, key in `.approval-key` in the directory), so what is saved is exactly what the approver read, a model reply shaped like a request saves nothing (one that copies a genuine request can only save that same learning, and saving a learning twice appends nothing), and a request still counts after a restart. A request whose text Slack stored differently from what was posted fails verification and says so, and saves nothing. Nothing expires. The agent sees only reactions added while it runs: one added while it was down counts after the approver removes and adds it again. With `approval: false`, the agent saves every learning and posts what it saved. Anyone who can post tasks can then put text into the memory that later tasks read, so leave approval on unless you trust everyone in the channel.
+- Learnings are appended to `learnings/YYYY-MM.md` in the directory, each under a heading naming the date and the task's message ts, as a block quote with line breaks normalised and code fences broken up, so no line of one learning can start a heading or a code block and pose as, or swallow, the entries after it. A learning counts as saved once appended: if indexing it fails, it is logged and becomes searchable at the next start. Any other Markdown file you put in the directory (runbooks, notes) is indexed at startup and searched the same way; edit and restart to change it. The index is `.poma-memory.db` in the directory.
+- At startup the agent checks the setup and refuses to start when it would give untrustworthy answers: poma-memory missing (the error names the image to run), older than 0.4.0, or with an empty gate that lets an unrelated query through, which is also how running without semantic search shows (`poma-memory status` reports semantic search even when the model is missing). The empty gate is what makes "nothing relevant" a possible answer: without it every search returns its best bad match. Its calibration is strict: a terse task such as "ingress broken after cert rotation" scored 0.32 against a note about exactly that, under the 0.35 cutoff, and got no notes, where a full sentence scored 0.44 and above. When the best match passes, the other results fill up to `results` even if weaker, which the prompt tells the model to judge.
+- poma-memory gets only a few variables (`PATH`, `HOME`, locale, `TMPDIR`, the `HF_*` model cache settings, proxies and CA settings), never the Slack tokens and never `POMA_MEMORY_EMPTY_GATE` or `POMA_EMBEDDER`, which could switch the gate off after the startup check. The task text reaches it as one argument after `--`.
+- An approver on the API backend is allowed only for memory approval.
+
 ## Tools
 
 With `agent.tools`, work rounds can investigate before they answer, and in fix mode make changes. It relies on Claude Code CLI behaviour verified on the version the image pins (`CLAUDE_CODE_VERSION`), which `ITAKEIT_LIVE=1 go test ./pkg/worker -run Live` checks again.
@@ -150,6 +173,12 @@ Knowledge paths resolve against `/config`, so mount the files next to the config
 
 ```
 docker build -t itakeit-agent . && docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" itakeit-agent
+```
+
+With `agent.memory`, run `ghcr.io/nice-pink/itakeit-agent-mem` (same tags as `ghcr.io/nice-pink/itakeit-agent`), or build `Dockerfile.mem`. It adds poma-memory (pinned by commit, `POMA_MEMORY_REF`) and its embedding model, and runs offline. The `itakeit-agent` image refuses a config with memory enabled and names this one. The default `dir: memory` is `/config/memory`, so mount a writable volume there:
+
+```
+docker build -f Dockerfile.mem -t itakeit-agent-mem . && docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v itakeit-memory:/config/memory itakeit-agent-mem
 ```
 
 ## Model calls

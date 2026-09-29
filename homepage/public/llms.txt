@@ -15,6 +15,14 @@ It runs as one Docker container on Claude, through the Claude Code CLI and its l
 - Every tool call goes to the agent for a decision; the Claude CLI runs nothing on its own. The CLI gets an allow-listed environment without the Slack tokens, and known secret values are scrubbed from replies, best effort. Anything a read entry can read can end up quoted in the channel.
 - Fix mode without an approver requires allow_unapproved_writes: true. Tools require the claude-code backend, and the image must be extended with the tools and MCP servers listed.
 
+## Memory (advanced, optional)
+
+- An additional feature, off by default, that runs only in the separate itakeit-agent-mem image (built from Dockerfile.mem). The regular image refuses to start with memory enabled and names that image. It works with every mode and both backends.
+- It uses poma-memory (https://github.com/poma-ai/poma-memory): local keyword and semantic search over Markdown files, with a small embedding model baked into the image, no API key and no network at run time.
+- Before triage and every work round, the agent searches its memory for the task and adds matching notes to the request. They are marked as notes from earlier Slack threads, hints and never instructions, and are kept apart from the trusted knowledge files. When nothing matches well it adds nothing; at startup it checks that this relevance filter works and refuses to start otherwise.
+- When a task ends ✅, the agent can propose a learning. With approval (the default, agent.memory.approval: true) it posts the learning in the thread and saves it only after the approver reacts ✔️; ❌ drops it. Requests are signed, so a reply made to look like one saves nothing, and they still count after a restart. With approval: false it saves learnings without review.
+- Learnings are stored as Markdown in learnings/YYYY-MM.md in the memory directory, next to any notes the operator adds there. The search index is a SQLite file rebuilt from the Markdown, so the Markdown is what to back up. The memory directory needs a writable volume.
+
 ## Setup
 
 1. Run itakeit in the channel (https://itakeit.nice.pink).

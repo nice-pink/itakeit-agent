@@ -78,6 +78,16 @@ agent:
   #     args: [stdio]
   #     env: [GITHUB_PERSONAL_ACCESS_TOKEN]
 
+  # Searchable memory of past tasks, with poma-memory (README "Memory"). Needs
+  # the itakeit-agent-mem image (Dockerfile.mem). Learnings from done tasks are
+  # saved after the approver's reaction, unless approval is false.
+  # memory:
+  #   enabled: true
+  #   dir: memory
+  #   bin: poma-memory
+  #   results: 3
+  #   approval: true
+
   # Extra environment variables for the claude CLI. It gets only what it needs
   # (PATH, HOME, proxies, CLAUDE_CODE_*, ...), never the Slack tokens. List
   # anything else it should see here.

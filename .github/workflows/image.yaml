@@ -20,8 +20,18 @@ concurrency:
 
 jobs:
   image:
+    # itakeit-agent, and itakeit-agent-mem with poma-memory for agent.memory.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            suffix: ''
+          - dockerfile: Dockerfile.mem
+            suffix: -mem
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The mem image installs poma-memory and its model under QEMU for arm64 too.
+    timeout-minutes: ${{ matrix.suffix == '' && 30 || 60 }}
     steps:
       - uses: actions/checkout@v7
 
@@ -40,7 +50,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository }}${{ matrix.suffix }}
           flavor: latest=false
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
@@ -52,9 +62,10 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max' || '' }}
+          cache-from: type=gha,scope=image${{ matrix.suffix }}
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=gha,mode=max,scope=image{0}', matrix.suffix) || '' }}

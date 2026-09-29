@@ -1,0 +1,11 @@
+#!/bin/sh
+# Records each call's arguments as one line, fields separated by US (0x1f),
+# and the environment it got, then answers like poma-memory would.
+( for a in "$@"; do printf '%s\037' "$a"; done; printf '\n' ) >> "$FAKE_MEM_ARGS"
+env > "$FAKE_MEM_ARGS.env"
+case "$1" in
+--version) echo "${FAKE_MEM_VERSION:-0.5.0}" ;;
+search) printf '%s' "${FAKE_MEM_OUT:-[]}" ;;
+status) echo "Semantic:  yes" ;;
+index) echo "Indexed" ;;
+esac

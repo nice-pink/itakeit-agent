@@ -213,3 +213,45 @@ func TestConfigMCP(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigMemory(t *testing.T) {
+	base := "channel: C1\nagent:\n  itakeit_user: U1\n  skills: x\n"
+	c, err := Parse([]byte(base))
+	if err != nil || c.Agent.Memory.Enabled || c.Agent.Memory.NeedsApproval() {
+		t.Fatalf("off by default: %+v, %v", c.Agent.Memory, err)
+	}
+	c, err = Parse([]byte(base + "  approver: U22\n  memory:\n    enabled: true\n"))
+	if m := c.Agent.Memory; err != nil || m.Dir != "memory" || m.Bin != "poma-memory" || m.Results != 3 || !m.NeedsApproval() {
+		t.Fatalf("defaults: %+v, %v", m, err)
+	}
+	c, err = Parse([]byte(base + "  memory:\n    enabled: true\n    approval: false\n"))
+	if err != nil || c.Agent.Memory.NeedsApproval() {
+		t.Fatalf("approval off: %+v, %v", c.Agent.Memory, err)
+	}
+	// The API backend takes an approver only for learnings.
+	if _, err := Parse([]byte(base + "  backend: api\n  approver: U22\n  memory:\n    enabled: true\n")); err != nil {
+		t.Fatalf("api with memory approval: %v", err)
+	}
+	for name, raw := range map[string]string{
+		"approval needs approver":       "  memory:\n    enabled: true\n",
+		"results range":                 "  approver: U22\n  memory:\n    enabled: true\n    results: 11\n",
+		"relative bin":                  "  approver: U22\n  memory:\n    enabled: true\n    bin: ./poma-memory\n",
+		"api approver without learning": "  backend: api\n  approver: U22\n  memory:\n    enabled: true\n    approval: false\n",
+	} {
+		if _, err := Parse([]byte(base + raw)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestLoadMemoryDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("channel: C1\nagent:\n  itakeit_user: U1\n  skills: x\n  memory:\n    enabled: true\n    approval: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil || c.Agent.Memory.Dir != filepath.Join(dir, "memory") {
+		t.Fatalf("dir = %q, %v", c.Agent.Memory.Dir, err)
+	}
+}

@@ -66,6 +66,8 @@ type Agent struct {
 	sessions  chan struct{}
 	tools     bool
 	approvals map[string]*approval // pending, by approval message ts
+	learner   Learner              // nil: no memory
+	learned   map[string]bool      // learning requests already answered, by message ts
 
 	ctx context.Context
 	do  chan func()
@@ -79,7 +81,7 @@ func New(api API, w worker.Worker, cfg *Config, me, meBot string) *Agent {
 	a := &Agent{api: api, work: w, cfg: cfg, emoji: cfg.Display(), me: me, meBot: meBot,
 		jobs: map[string]*job{}, queued: map[string]bool{}, sem: make(chan struct{}, cfg.Agent.MaxParallel),
 		sessions: make(chan struct{}, cfg.Agent.MaxSessions), tools: cfg.Agent.WorkerTools() != nil,
-		approvals: map[string]*approval{}, ctx: context.Background(), do: make(chan func(), 64)}
+		approvals: map[string]*approval{}, learned: map[string]bool{}, ctx: context.Background(), do: make(chan func(), 64)}
 	a.spawn = func(fn func() func()) { go func() { a.post(fn()) }() }
 	a.after = func(d time.Duration, f func()) { time.AfterFunc(d, func() { a.post(f) }) }
 	return a
@@ -354,6 +356,7 @@ func (a *Agent) finish(ts string, res worker.Result, err error) {
 	a.setStatus(ts, res.Status)
 	if res.Status == task.Done {
 		a.cleanup(ts)
+		a.learn(ts, res.Learning)
 	}
 }
 

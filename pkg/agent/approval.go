@@ -86,6 +86,7 @@ func (a *Agent) requestApproval(ts string, r worker.ApprovalRequest, reply chan 
 func (a *Agent) onReaction(ev *slackevents.ReactionAddedEvent) {
 	ap := a.approvals[ev.Item.Timestamp]
 	if ap == nil {
+		a.onLearningReaction(ev)
 		return
 	}
 	s := a.cfg.Agent

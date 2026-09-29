@@ -67,7 +67,25 @@ type Settings struct {
 	MaxSessions  int            `yaml:"max_sessions"`
 	ToolEntries  []worker.Entry `yaml:"-"`
 	WriteEntries []worker.Entry `yaml:"-"`
+	// Memory is the searchable memory of past tasks (poma-memory).
+	Memory Memory `yaml:"memory"`
 }
+
+// Memory is the agent.memory block. Dir is relative to the directory of the
+// -config path, and Load makes it absolute.
+type Memory struct {
+	Enabled bool   `yaml:"enabled"`
+	Dir     string `yaml:"dir"`
+	Bin     string `yaml:"bin"`
+	Results int    `yaml:"results"`
+	// Approval makes every learning wait for agent.approver's reaction before
+	// it is saved. Default true: learnings come from Slack threads, and a saved
+	// one reaches every later task it matches.
+	Approval *bool `yaml:"approval"`
+}
+
+// NeedsApproval reports whether learnings wait for the approver.
+func (m Memory) NeedsApproval() bool { return m.Enabled && (m.Approval == nil || *m.Approval) }
 
 // MCPServer is one agent.mcp_servers entry. Env and Headers name variables of
 // the agent's environment, whose values reach the server through mcp.json.
@@ -114,6 +132,14 @@ func Load(path string) (*Config, error) {
 	c, err := Parse(raw)
 	if err != nil {
 		return nil, err
+	}
+	if m := &c.Agent.Memory; m.Enabled {
+		if !filepath.IsAbs(m.Dir) {
+			m.Dir = filepath.Join(filepath.Dir(path), m.Dir)
+		}
+		if m.Dir, err = filepath.Abs(m.Dir); err != nil {
+			return nil, err
+		}
 	}
 	c.Agent.KnowledgeText, err = readKnowledge(filepath.Dir(path), c.Agent.Knowledge)
 	return c, err
@@ -203,7 +229,32 @@ func Parse(raw []byte) (*Config, error) {
 	if s.RecoverMessages == 0 {
 		s.RecoverMessages = 200
 	}
+	if err := parseMemory(&s); err != nil {
+		return nil, err
+	}
 	return &Config{Config: base, Agent: s}, nil
+}
+
+func parseMemory(s *Settings) error {
+	m := &s.Memory
+	if !m.Enabled {
+		return nil
+	}
+	m.Dir = cmp.Or(m.Dir, "memory")
+	m.Bin = cmp.Or(m.Bin, "poma-memory")
+	if strings.Contains(m.Bin, "/") && !filepath.IsAbs(m.Bin) {
+		return errors.New("config: agent.memory.bin must be absolute or a name on PATH")
+	}
+	switch {
+	case m.Results == 0:
+		m.Results = 3
+	case m.Results < 1 || m.Results > 10:
+		return errors.New("config: agent.memory.results must be between 1 and 10")
+	}
+	if m.NeedsApproval() && s.Approver == "" {
+		return errors.New("config: agent.memory.approval needs agent.approver, whose reaction saves each learning: set it, or agent.memory.approval: false to save learnings unreviewed")
+	}
+	return nil
 }
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -308,8 +359,9 @@ func parseTools(s *Settings, emoji map[task.Action][]string) error {
 		}
 		s.WriteEntries = append(s.WriteEntries, e)
 	}
-	if s.Backend != BackendClaudeCode && (len(s.ToolEntries)+len(s.WriteEntries) > 0 || s.Approver != "" || s.Mode == string(worker.ModeFix) || len(s.MCPServers) > 0) {
-		return fmt.Errorf("config: agent.tools, agent.mcp_servers, agent.approver and mode fix need backend %s: the API backend has no tools", BackendClaudeCode)
+	// An approver on the API backend only approves learnings.
+	if s.Backend != BackendClaudeCode && (len(s.ToolEntries)+len(s.WriteEntries) > 0 || (s.Approver != "" && !s.Memory.NeedsApproval()) || s.Mode == string(worker.ModeFix) || len(s.MCPServers) > 0) {
+		return fmt.Errorf("config: agent.tools, agent.mcp_servers, agent.approver (except for agent.memory.approval) and mode fix need backend %s: the API backend has no tools", BackendClaudeCode)
 	}
 	if err := checkMCP(s); err != nil {
 		return err

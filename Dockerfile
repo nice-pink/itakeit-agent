@@ -21,5 +21,8 @@ ARG CLAUDE_CODE_VERSION=2.1.284
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
 COPY --from=builder /app/bin/itakeit-agent /app/itakeit-agent
+# This image has no poma-memory: with agent.memory enabled the agent stops and
+# names the image built from Dockerfile.mem.
+ENV ITAKEIT_AGENT_IMAGE=itakeit-agent
 USER node
 ENTRYPOINT [ "/app/itakeit-agent", "-config", "/config/config.yaml" ]

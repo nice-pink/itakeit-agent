@@ -103,7 +103,19 @@ func (f *fakeAPI) RemoveReaction(name string, item slack.ItemRef) error {
 func (f *fakeAPI) GetReactions(item slack.ItemRef, _ slack.GetReactionsParameters) (slack.ReactedItem, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slack.ReactedItem{Reactions: f.reactions[item.Timestamp]}, nil
+	out := slack.ReactedItem{Reactions: f.reactions[item.Timestamp]}
+	for thread, msgs := range f.threads {
+		for _, m := range msgs {
+			if m.Timestamp == item.Timestamp {
+				m.ThreadTimestamp = thread
+				if text, ok := f.updates[m.Timestamp]; ok {
+					m.Text = text
+				}
+				out.Message = &m
+			}
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeAPI) GetConversationReplies(p *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error) {
