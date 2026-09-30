@@ -1,0 +1,16 @@
+# Lets the agent restart workloads in one namespace. Not part of
+# kustomization.yaml, whose namespace setting would move it into itakeit:
+# apply it to each namespace where restarts may happen, for example
+#   kubectl -n web apply -f examples/in-cluster/restart-binding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: itakeit-agent-restart
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: itakeit-agent-restart
+subjects:
+  - kind: ServiceAccount
+    name: itakeit-agent
+    namespace: itakeit

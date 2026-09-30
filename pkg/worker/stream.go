@@ -29,7 +29,8 @@ const (
 
 // stream is one `claude -p` run in stream-json mode with tools. The CLI sends
 // every permission request to this process (--permission-prompt-tool stdio),
-// and decide answers it. Verified on CLI 2.1.284; see the spec's V1-V11.
+// and decide answers it. Verified on CLI 2.1.284, and by the live tests on
+// 2.1.285; see the spec's V1-V11.
 type stream struct {
 	bin, model, cwd, sysFile, schema, effort, user string
 	env                                            []string
@@ -499,7 +500,7 @@ func unapproved(name string, b contentBlock, decided bool, initTools []string) b
 }
 
 // cliRejections open the results the CLI writes when it refuses a call before
-// anything runs (strings in the 2.1.284 binary). "Error calling tool" is not
+// anything runs (strings in the 2.1.284 and 2.1.285 binaries). "Error calling tool" is not
 // one: it wraps an exception thrown after the call started.
 var cliRejections = []string{"<tool_use_error>InputValidationError", "<tool_use_error>Error: No such tool available",
 	"<tool_use_error>Permission to use", "<tool_use_error>Blocked: "}

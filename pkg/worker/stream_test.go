@@ -20,7 +20,7 @@ import (
 const (
 	initLine   = `out {"type":"system","subtype":"init","permissionMode":"default","tools":["Bash","Read","StructuredOutput"]}`
 	resultLine = `out {"type":"result","subtype":"success","is_error":false,"structured_output":{"status":"done","reply":"ok"}}`
-	testTask   = "1712345678.000100"
+	testTask   = "C0123-1712345678.000100" // the agent's key: channel and ts
 )
 
 // fakeStream is a Claude with tools whose CLI is testdata/fake-claude playing

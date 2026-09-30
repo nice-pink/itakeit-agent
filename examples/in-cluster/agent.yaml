@@ -1,0 +1,67 @@
+# The agent. kubectl finds no kubeconfig and falls back to the in-cluster
+# config: the ServiceAccount token mounted below and KUBERNETES_SERVICE_HOST and
+# _PORT, which config.yaml must list in agent.env (the claude CLI gets only
+# allow-listed variables).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: itakeit-agent
+spec:
+  # One instance per channel: a second would answer every event again, and
+  # Recreate stops the old pod before the new one starts.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: itakeit-agent
+  template:
+    metadata:
+      labels:
+        app: itakeit-agent
+    spec:
+      serviceAccountName: itakeit-agent
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # node, the image's user
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: agent
+          # The published image has no kubectl: build examples/kubectl and push it
+          # to a registry the cluster pulls from, then name it here.
+          image: registry.example.com/itakeit-agent-kubectl:latest
+          envFrom:
+            - secretRef:
+                name: itakeit-agent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              # Each claude CLI run is a node process; max_parallel and
+              # max_sessions bound how many run at once.
+              memory: 2Gi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            # The CLI writes its state to HOME and /tmp on every run.
+            - name: home
+              mountPath: /home/node
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: itakeit-config
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

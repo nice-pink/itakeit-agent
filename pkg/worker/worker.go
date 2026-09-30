@@ -259,9 +259,11 @@ func cut(s string, n int) string {
 	return s
 }
 
-// taskID is a Slack message ts, the only form a task directory is named by, so
-// an ID can never name a path outside tasks/.
-var taskID = regexp.MustCompile(`^[0-9]{1,20}\.[0-9]{1,10}$`)
+// taskID is a Slack message ts, optionally after its channel ID and a dash
+// (the agent's key, C0123-1712345678.000100, since a ts is unique only within
+// its channel). Those are the only forms a task directory is named by, so an
+// ID can never name a path outside tasks/.
+var taskID = regexp.MustCompile(`^(?:[CG][A-Z0-9]{1,30}-)?[0-9]{1,20}\.[0-9]{1,10}$`)
 
 // taskDir is the working directory of one task's tool sessions. It lives until
 // Cleanup, so files a round leaves are still there when a reply resumes it.

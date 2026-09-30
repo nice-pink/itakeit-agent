@@ -33,9 +33,9 @@ agent:
   knowledge:
     - knowledge/runbooks.md`
 
-  const build = `git clone https://github.com/nice-pink/itakeit-agent.git && docker build -t itakeit-agent itakeit-agent`
+  const run = `docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" ghcr.io/nice-pink/itakeit-agent:latest`
 
-  const run = `docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" itakeit-agent`
+  const build = `git clone https://github.com/nice-pink/itakeit-agent.git && docker build -t itakeit-agent itakeit-agent`
 
   const tools = `agent:
   mode: fix                    # or propose: investigate and propose only
@@ -63,9 +63,7 @@ agent:
     results: 3            # notes added to a request, at most
     approval: true        # default; false saves unreviewed`
 
-  const memoryBuild = `docker build -f itakeit-agent/Dockerfile.mem -t itakeit-agent-mem itakeit-agent`
-
-  const memoryRun = `docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" -v itakeit-memory:/config/memory itakeit-agent-mem`
+  const memoryRun = `docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" -v itakeit-memory:/config/memory ghcr.io/nice-pink/itakeit-agent-mem:latest`
 
   const usage = [
     ['anyone', 'posts a task in the channel', 'after claim_delay_seconds (0 unless set; the example config uses 120), if nobody took it, the agent asks Claude whether its skills cover it'],
@@ -99,7 +97,7 @@ agent:
     <div class="pitch">
       <img class="turtle" src="./turtle-parrot.png" alt="pixel parrot riding the itakeit turtle" width="400" height="340" />
       <h1>A teammate in your Slack task channel. <span>It takes what it can do.</span></h1>
-      <p class="lead"><b>itakeit-agent</b> watches the Slack channel your <a href={itakeit}>itakeit</a> bot tracks and claims the tasks its skills cover. It works them in the thread the way a person does, with <Emojify text="🙋" />, a reply and a status, on Claude. Give it tools and it investigates; allow changes and it makes them, with an approver only after they say so.</p>
+      <p class="lead"><b>itakeit-agent</b> watches the Slack channels your <a href={itakeit}>itakeit</a> bot tracks and claims the tasks its skills cover. It works them in the thread the way a person does, with <Emojify text="🙋" />, a reply and a status, on Claude. Give it tools and it investigates; allow changes and it makes them, with an approver only after they say so.</p>
       <div class="cta">
         <a class="btn" href="#setup">Set it up</a>
         <a class="btn ghost" href={repo}>View on GitHub</a>
@@ -153,19 +151,19 @@ agent:
           <summary>Show slack-app-manifest.yaml</summary>
           <Code code={manifest.trim()} label="slack-app-manifest.yaml" />
         </details>
-        <p>It requests <code>channels:history</code>, <code>groups:history</code>, <code>chat:write</code>, <code>reactions:read</code> and <code>reactions:write</code>, and subscribes to reactions for approvals. Socket Mode, so no request URL.</p>
+        <p>It requests <code>channels:history</code>, <code>groups:history</code>, <code>channels:read</code>, <code>groups:read</code>, <code>chat:write</code>, <code>reactions:read</code> and <code>reactions:write</code>, and subscribes to reactions for approvals and to join, leave and archive events, so it follows the channels it is in. Socket Mode, so no request URL.</p>
       </li>
       <li>
         <h3>Get the two tokens</h3>
         <p>Under <b>Basic Information → App-Level Tokens</b>, generate a token with <code>connections:write</code>: that <code>xapp-…</code> token is <code>AGENT_SLACK_APP_TOKEN</code>. Under <b>Install App</b>, install the app and copy the <code>xoxb-…</code> Bot User OAuth Token: <code>AGENT_SLACK_BOT_TOKEN</code>.</p>
       </li>
       <li>
-        <h3>Invite it to the channel</h3>
-        <p>In the itakeit channel, run <code>/invite @itakeit-agent</code>.</p>
+        <h3>Invite it to the channels</h3>
+        <p>In each channel itakeit tracks, run <code>/invite @itakeit-agent</code>. The agent works in the same channels as itakeit, from the shared config: its <code>channels</code> list, or with <code>auto_channels: true</code> every channel the agent is invited to, so inviting it is all it takes to add one.</p>
       </li>
       <li>
         <h3>Add the agent block to config.yaml</h3>
-        <p>Start from itakeit's own <code>config.yaml</code>, so both apps agree on the channel and the emoji, and add an <code>agent</code> block. itakeit ignores it, so both can mount the same file. <code>skills</code> is what the agent takes; <code>knowledge</code> files are optional. Every other setting is in <a href="{repo}/blob/main/config.example.yaml">config.example.yaml</a>.</p>
+        <p>Start from itakeit's own <code>config.yaml</code>, so both apps agree on the channels and the emoji, and add an <code>agent</code> block. itakeit ignores it, so both can mount the same file. <code>skills</code> is what the agent takes; <code>knowledge</code> files are optional. Every other setting is in <a href="{repo}/blob/main/config.example.yaml">config.example.yaml</a>.</p>
         <Code code={config} label="config.yaml" />
       </li>
       <li>
@@ -173,12 +171,17 @@ agent:
         <p>On any machine with Claude Code, run <code>claude setup-token</code> once and keep the token as <code>CLAUDE_CODE_OAUTH_TOKEN</code>. Usage counts against that Claude plan. To bill the API instead, set <code>backend: api</code> and pass <code>-e ANTHROPIC_API_KEY</code> in place of the token; tools need the default <code>claude-code</code> backend.</p>
       </li>
       <li>
-        <h3>Build and run the container</h3>
-        <p>Export the three tokens, then start the container from the directory with <code>config.yaml</code> and your knowledge files.</p>
+        <h3>Run the container</h3>
+        <p>Export the three tokens, then start the published image from the directory with <code>config.yaml</code> and your knowledge files. It is built for amd64 and arm64; <code>latest</code> follows <code>main</code>, and releases are tagged.</p>
         <Code code={'export AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...'} label="shell" />
-        <Code code={build} label="shell" />
         <Code code={run} label="shell" />
-        <p>At startup it checks the Claude login with one probe call and refuses to start without a working one. Post a question the skills cover and watch it take the task.</p>
+        <p>Or build it yourself, and run <code>itakeit-agent</code> in place of the image name above:</p>
+        <Code code={build} label="shell" />
+        <p>To run itakeit next to it, the repository has Docker Compose files for both: <code>docker-compose-remote.yml</code> with the published images, <code>docker-compose-local.yml</code> built from source.</p>
+      </li>
+      <li>
+        <h3>Check it</h3>
+        <p>The log shows <code>authenticated</code> and then <code>connected to slack</code>. A setup problem (channel, login, config) stops it at startup with an error that names the fix. Then post a question the skills cover and watch it take the task.</p>
       </li>
     </ol>
 
@@ -197,7 +200,8 @@ agent:
           <p><b>Every call goes through the agent.</b> The Claude CLI asks the agent about each tool call and runs only what it allows. File tools stay in a per-task directory, and a session that runs a tool on its own is stopped.</p>
           <p><b>Changes are seen before they run.</b> Each write is posted in the thread first. With an <code>approver</code>, it waits for that person’s ✔️ on the approval message (30 minutes by default, then it is denied), and every reply lists the actions that ran. Fix mode without an approver needs <code>allow_unapproved_writes: true</code>, since anyone in the channel can then trigger the write entries.</p>
           <p><b>Secrets, as far as it goes.</b> The CLI gets an allow-listed environment without the Slack tokens, and MCP server secrets go only into a private config file. Known secret values are scrubbed from replies, best effort. What a read entry can read, the channel can get quoted: <code>Bash(kubectl get *)</code> reads Kubernetes Secrets too, so keep entries and credentials narrow.</p>
-          <p><b>Bring your tools.</b> The image holds only the Claude CLI. Build your own image <code>FROM itakeit-agent</code> with the commands and MCP servers you list (install them as <code>USER root</code>, then switch back to <code>USER node</code>), and pass their credentials: <code>-e KUBECONFIG</code> with the file mounted, <code>-e GITHUB_PERSONAL_ACCESS_TOKEN</code>. Tools need <code>backend: claude-code</code>.</p>
+          <p><b>Bring your tools.</b> The image holds only the Claude CLI: which tools and credentials a deployment gets is your call. The repository's examples build on it: <a href="{repo}/tree/main/examples/kubectl">kubectl</a> with a mounted kubeconfig, <a href="{repo}/tree/main/examples/gcloud">gcloud</a> for GKE, and <a href="{repo}/tree/main/examples/in-cluster">in-cluster</a>, where kubectl uses the pod's ServiceAccount. A kubeconfig has to work inside the container: no paths or auth plugins from your machine. Other tools and MCP servers go into your own image <code>FROM</code> the agent's, installed as <code>USER root</code>, then back to <code>USER node</code>. Tools need <code>backend: claude-code</code>.</p>
+          <p><b>Credentials set the limit.</b> Fix mode gives each session a fresh, empty home directory, so a write cannot plant anything for the next one; the agent copies the kubeconfig named in <code>KUBECONFIG</code> into it. <code>allow_real_home: true</code> keeps the real one instead, with an approver. Read entries that can print or change credentials, such as <code>Bash(kubectl *)</code>, <code>kubectl config</code> or <code>gcloud auth</code>, are refused at startup, and so is every call with a flag like <code>--insecure-skip-tls-verify</code> or <code>--kubeconfig</code>. Give the tools an identity that can do no more than the entries need.</p>
         </div>
         <Code code={tools} label="config.yaml (agent block)" />
       </div>
@@ -217,8 +221,7 @@ agent:
       </div>
       <Code code={memory} label="config.yaml (agent block)" />
     </div>
-    <p>Build the memory image and run it with a writable volume for the memory directory:</p>
-    <Code code={memoryBuild} label="shell" />
+    <p>Run the published memory image with a writable volume for the memory directory, or build it from <code>Dockerfile.mem</code>:</p>
     <Code code={memoryRun} label="shell" />
   </section>
 

@@ -1,0 +1,42 @@
+# itakeit and itakeit-agent from the images published to the GitHub
+# registry. Both read ./config.yaml. Tokens come from the same .env files as
+# docker-compose-local.yml: ./.env for the agent, ITAKEIT_DIR/.env (default
+# ../itakeit) for itakeit.
+#
+#   docker compose -f docker-compose-remote.yml up -d
+#   docker compose -f docker-compose-remote.yml pull && docker compose -f docker-compose-remote.yml up -d
+#
+# ITAKEIT_TAG and ITAKEIT_AGENT_TAG pick a version (latest follows main; X.Y.Z,
+# X.Y and sha-<short> also exist). With agent.memory, set ITAKEIT_AGENT_REPO
+# to ghcr.io/nice-pink/itakeit-agent-mem and mount a writable volume at
+# /config/memory. Run one instance per channel: stop scripts/tmux.sh and the
+# local compose first.
+name: itakeit
+
+services:
+  itakeit:
+    image: ghcr.io/nice-pink/itakeit:${ITAKEIT_TAG:-latest}
+    restart: unless-stopped
+    env_file: ${ITAKEIT_DIR:-../itakeit}/.env
+    # db_path in config.yaml is relative (itakeit.db), so running in /data puts
+    # the database on the volume. The image's /data belongs to its uid 65532.
+    working_dir: /data
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - itakeit-data:/data
+
+  agent:
+    image: ${ITAKEIT_AGENT_REPO:-ghcr.io/nice-pink/itakeit-agent}:${ITAKEIT_AGENT_TAG:-latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # .env holds host paths for scripts/tmux.sh, which mean nothing here.
+      KUBECONFIG: ""
+      CLOUDSDK_CONFIG: ""
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      # Knowledge files resolve against /config:
+      # - ./knowledge:/config/knowledge:ro
+
+volumes:
+  itakeit-data:

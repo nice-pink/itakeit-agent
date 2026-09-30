@@ -1,8 +1,15 @@
-# The agent reads itakeit's own config file, so both apps agree on the channel,
+# The agent reads itakeit's own config file, so both apps agree on the channels,
 # the emoji and status_claims. Copy the itakeit config and add the agent block;
 # itakeit ignores it. The fields below the agent block are itakeit's and are
 # documented in itakeit's config.example.yaml.
-channel: C0123456789
+#
+# The channels the agent works in, the same as itakeit's: a list of channel IDs
+# (a single `channel: C0123456789` still works), or auto_channels: true for
+# every channel the agent is a member of. With auto_channels, invite the agent
+# only to itakeit's channels: it takes tasks wherever it is.
+channels:
+  - C0123456789
+# auto_channels: true
 status_claims: false
 emoji:
   claim: [raising_hand]

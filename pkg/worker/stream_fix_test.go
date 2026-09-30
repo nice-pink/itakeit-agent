@@ -104,7 +104,7 @@ func TestCovers(t *testing.T) {
 		read, write string
 		want        bool
 	}{
-		{"Bash(kubectl *)", "Bash(kubectl rollout restart *)", true},
+		{"Bash(argocd *)", "Bash(argocd app sync *)", true},
 		{"Bash(kubectl rollout *)", "Bash(kubectl rollout restart *)", true},
 		{"Bash(kubectl rollout restart deploy/api)", "Bash(kubectl rollout restart *)", true},
 		{"Bash(kubectl get *)", "Bash", true},

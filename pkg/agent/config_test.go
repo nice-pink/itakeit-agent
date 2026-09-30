@@ -170,7 +170,7 @@ func TestConfigFixMode(t *testing.T) {
 		fix + "  approver: bob\n":         "Slack member ID",
 		fix + "  approver: UBOT1\n":       "itakeit bot",
 		"  mode: fix\n  approver: UAPP\n  tools:\n    read: [\"Bash(kubectl get *)\"]\n    write: [\"Bash(kubectl get *)\"]\n":                                  "also covers write entry",
-		"  mode: fix\n  approver: UAPP\n  tools:\n    read: [\"Bash(kubectl *)\"]\n    write: [\"Bash(kubectl rollout restart *)\"]\n":                          "also covers write entry",
+		"  mode: fix\n  approver: UAPP\n  tools:\n    read: [\"Bash(kubectl *)\"]\n    write: [\"Bash(kubectl rollout restart *)\"]\n":                          "cannot be a read entry",
 		"  mode: fix\n  approver: UAPP\n  tools:\n    read: [\"Bash(kubectl rollout restart deploy/api)\"]\n    write: [\"Bash(kubectl rollout restart *)\"]\n": "also covers write entry",
 		"  mode: fix\n  approver: UAPP\n  tools:\n    read: [\"Bash(kubectl get *)\"]\n    write: [Bash]\n":                                                     "also covers write entry",
 		"  mode: fix\n  allow_unapproved_writes: true\n  tools:\n    write: [Bash]\n":                                                                           "needs agent.approver",

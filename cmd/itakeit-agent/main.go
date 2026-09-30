@@ -77,8 +77,8 @@ func run(cfgPath string, debug bool) error {
 	if auth.UserID == cfg.Agent.ItakeitUser || (cfg.Agent.ItakeitApp != "" && appTokenApp(appToken) == cfg.Agent.ItakeitApp) {
 		return errors.New("the agent's tokens belong to the itakeit app: create a separate Slack app for the agent, itakeit ignores its own reactions")
 	}
-	slog.Info("authenticated", "team", auth.Team, "agent_user", auth.UserID, "channel", cfg.Channel, "backend", cfg.Agent.Backend, "model", cfg.Agent.Model)
-	if err := agent.CheckChannel(api, cfg.Channel); err != nil {
+	slog.Info("authenticated", "team", auth.Team, "agent_user", auth.UserID, "channels", cfg.Channels, "auto_channels", cfg.AutoChannels, "backend", cfg.Agent.Backend, "model", cfg.Agent.Model)
+	if err := agent.CheckChannels(api, cfg); err != nil {
 		return err
 	}
 

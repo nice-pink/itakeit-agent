@@ -14,10 +14,10 @@ import (
 )
 
 // approval is one write waiting for the approver's reaction. It lives on the
-// event loop, keyed by the approval message's ts, so only a reaction on that
+// event loop, keyed by the approval message's key, so only a reaction on that
 // exact message can resolve it.
 type approval struct {
-	task, msg string // the task's ts, the approval message's ts
+	task, msg string // the task's key, the approval message's key
 	text      string // the message without its last line, which says how it ended
 	reply     chan worker.Decision
 	done      bool
@@ -84,7 +84,7 @@ func (a *Agent) requestApproval(ts string, r worker.ApprovalRequest, reply chan 
 // onReaction resolves an approval. Only the approver's user ID counts, only
 // with the approve or deny emoji, and only on a pending approval message.
 func (a *Agent) onReaction(ev *slackevents.ReactionAddedEvent) {
-	ap := a.approvals[ev.Item.Timestamp]
+	ap := a.approvals[key(ev.Item.Channel, ev.Item.Timestamp)]
 	if ap == nil {
 		a.onLearningReaction(ev)
 		return
@@ -140,7 +140,8 @@ func (a *Agent) cancelApproval(reply chan worker.Decision, label string) {
 }
 
 // resolveApproval answers the worker once and shows the outcome in place of
-// the message's last line.
+// the message's last line. An empty label leaves the message as it is, for a
+// channel the agent can no longer update.
 func (a *Agent) resolveApproval(ap *approval, d worker.Decision, label string) {
 	if ap.done {
 		return
@@ -149,7 +150,11 @@ func (a *Agent) resolveApproval(ap *approval, d worker.Decision, label string) {
 	delete(a.approvals, ap.msg)
 	ap.reply <- d
 	slog.Info("approval resolved", "ts", ap.task, "msg", ap.msg, "allow", d.Allow, "by", d.By, "outcome", label)
-	if _, _, _, err := a.api.UpdateMessage(a.cfg.Channel, ap.msg, slack.MsgOptionText(ap.text+"\n"+label, false)); err != nil {
+	if label == "" {
+		return
+	}
+	ch, msg := split(ap.msg)
+	if _, _, _, err := a.api.UpdateMessage(ch, msg, slack.MsgOptionText(ap.text+"\n"+label, false)); err != nil {
 		slog.Warn("update approval", "msg", ap.msg, "err", err)
 	}
 }

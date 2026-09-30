@@ -1,5 +1,8 @@
-// Package agent claims tasks in an itakeit channel and reports its progress the
+// Package agent claims tasks in itakeit's channels and reports its progress the
 // way a person does: with reactions on the task message and replies in its thread.
+//
+// Tasks, approvals and learning requests are keyed by channel and message ts
+// together (key), since a ts is unique only within its channel.
 //
 // It never talks to itakeit directly. itakeit sees the agent as one more user, so
 // the channel shows the agent as the owner and every itakeit rule (owners only,
@@ -34,6 +37,8 @@ type API interface {
 	GetConversationReplies(p *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error)
 	GetConversationHistory(p *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error)
 	UpdateMessage(channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error)
+	GetConversationsForUser(p *slack.GetConversationsForUserParameters) ([]slack.Channel, string, error)
+	GetUsersInConversation(p *slack.GetUsersInConversationParameters) ([]string, string, error)
 }
 
 // job is a task the agent owns. held are the status reactions it has on the task
@@ -55,19 +60,20 @@ type Agent struct {
 	work   worker.Worker
 	cfg    *Config
 	emoji  map[task.Action]string
-	me     string // the agent's user ID
-	meBot  string // the agent's bot ID
-	jobs   map[string]*job
+	me     string          // the agent's user ID
+	meBot  string          // the agent's bot ID
+	jobs   map[string]*job // by key
 	queued map[string]bool // top-level messages waiting for or in triage
+	joined map[string]bool // auto_channels: the channels the agent is a member of
 	sem    chan struct{}   // triage and rounds without tools
 	// sessions bound the rounds with tools, running or waiting for an approval.
 	// They are separate from sem, so a round waiting for the approver never
 	// holds up triage or rounds without tools.
 	sessions  chan struct{}
 	tools     bool
-	approvals map[string]*approval // pending, by approval message ts
+	approvals map[string]*approval // pending, by the approval message's key
 	learner   Learner              // nil: no memory
-	learned   map[string]bool      // learning requests already answered, by message ts
+	learned   map[string]bool      // learning requests already answered, by message key
 
 	ctx context.Context
 	do  chan func()
@@ -79,7 +85,7 @@ type Agent struct {
 
 func New(api API, w worker.Worker, cfg *Config, me, meBot string) *Agent {
 	a := &Agent{api: api, work: w, cfg: cfg, emoji: cfg.Display(), me: me, meBot: meBot,
-		jobs: map[string]*job{}, queued: map[string]bool{}, sem: make(chan struct{}, cfg.Agent.MaxParallel),
+		jobs: map[string]*job{}, queued: map[string]bool{}, joined: map[string]bool{}, sem: make(chan struct{}, cfg.Agent.MaxParallel),
 		sessions: make(chan struct{}, cfg.Agent.MaxSessions), tools: cfg.Agent.WorkerTools() != nil,
 		approvals: map[string]*approval{}, learned: map[string]bool{}, ctx: context.Background(), do: make(chan func(), 64)}
 	a.spawn = func(fn func() func()) { go func() { a.post(fn()) }() }
@@ -94,13 +100,18 @@ func (a *Agent) post(f func()) {
 	}
 }
 
-// Run recovers owned tasks from the channel, then consumes events until ctx ends.
+// Run recovers owned tasks from the channels, then consumes events until ctx ends.
 func (a *Agent) Run(ctx context.Context, sm *socketmode.Client) error {
 	a.ctx = ctx
 	errc := make(chan error, 1)
 	go func() { errc <- sm.RunContext(ctx) }()
 	events := ackLoop(ctx, sm)
 	a.Recover()
+	if a.cfg.AutoChannels {
+		var tick func()
+		tick = func() { a.relist(); a.after(relistEvery, tick) }
+		a.after(relistEvery, tick)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -148,32 +159,67 @@ func ackLoop(ctx context.Context, sm *socketmode.Client) <-chan slackevents.Even
 
 // Handle dispatches one Events API event. Exported for tests.
 func (a *Agent) Handle(e slackevents.EventsAPIEvent) {
-	if ev, ok := e.InnerEvent.Data.(*slackevents.ReactionAddedEvent); ok {
-		if ev.Item.Channel == a.cfg.Channel {
+	switch ev := e.InnerEvent.Data.(type) {
+	case *slackevents.ReactionAddedEvent:
+		if a.serves(ev.Item.Channel) {
 			a.onReaction(ev)
 		}
 		return
-	}
-	ev, ok := e.InnerEvent.Data.(*slackevents.MessageEvent)
-	if !ok || ev.Channel != a.cfg.Channel {
+	case *slackevents.MemberJoinedChannelEvent:
+		// itakeit's bot joining counts too: with auto_channels the agent serves
+		// only channels itakeit is in.
+		switch {
+		case ev.User == a.me:
+			a.onJoin(ev.Channel, "re-invited")
+		case ev.User != "" && ev.User == a.cfg.Agent.ItakeitUser:
+			a.onJoin(ev.Channel, "paused while itakeit was not in the channel")
+		}
+		return
+	case *slackevents.MemberLeftChannelEvent:
+		if ev.User == a.me || (ev.User != "" && ev.User == a.cfg.Agent.ItakeitUser && a.cfg.AutoChannels) {
+			a.onLeave(ev.Channel)
+		}
+		return
+	case *slackevents.ChannelUnarchiveEvent:
+		a.onJoin(ev.Channel, "paused while the channel was archived")
+		return
+	case *slackevents.GroupUnarchiveEvent:
+		a.onJoin(ev.Channel, "paused while the channel was archived")
+		return
+	case *slackevents.ChannelLeftEvent:
+		a.onLeave(ev.Channel)
+		return
+	case *slackevents.GroupLeftEvent:
+		a.onLeave(ev.Channel)
+		return
+	case *slackevents.ChannelArchiveEvent:
+		a.onLeave(ev.Channel)
+		return
+	case *slackevents.GroupArchiveEvent:
+		a.onLeave(ev.Channel)
 		return
 	}
+	ev, ok := e.InnerEvent.Data.(*slackevents.MessageEvent)
+	if !ok || !a.serves(ev.Channel) {
+		return
+	}
+	ch := ev.Channel
 	switch ev.SubType {
 	case "message_deleted":
-		a.forget(ev.DeletedTimeStamp)
+		a.forget(key(ch, ev.DeletedTimeStamp), "the task was deleted")
 	case "message_changed":
 		if ev.Message != nil && ev.Message.SubType == "tombstone" {
-			a.forget(ev.Message.Timestamp)
+			a.forget(key(ch, ev.Message.Timestamp), "the task was deleted")
 		}
 	case "", "bot_message", "file_share", "thread_broadcast":
 		if ev.User == a.me || (ev.BotID != "" && ev.BotID == a.meBot) || a.fromItakeit(ev) {
 			return
 		}
 		if ev.ThreadTimeStamp != "" && ev.ThreadTimeStamp != ev.TimeStamp {
-			a.onReply(ev.ThreadTimeStamp, ev.User, ev.BotID, ev.Text)
+			a.onReply(key(ch, ev.ThreadTimeStamp), ev.User, ev.BotID, ev.Text)
 			return
 		}
-		a.onTask(ev.TimeStamp, ev.Text)
+		a.onTask(key(ch, ev.TimeStamp), ev.Text)
 	}
 }
 
@@ -187,13 +233,20 @@ func (a *Agent) fromItakeit(ev *slackevents.MessageEvent) bool {
 	return s.ItakeitApp != "" && ev.Message != nil && ev.Message.BotProfile != nil && ev.Message.BotProfile.AppID == s.ItakeitApp
 }
 
-func (a *Agent) forget(ts string) {
+// forget drops a task: its round is cancelled and its pending approvals are
+// denied with why. The approval messages show why too, unless why is
+// leftChannel: the agent can no longer update messages there.
+func (a *Agent) forget(ts, why string) {
 	if j := a.jobs[ts]; j != nil && j.cancel != nil {
 		j.cancel()
 	}
 	for _, ap := range a.approvals {
 		if ap.task == ts {
-			a.resolveApproval(ap, worker.Decision{Reason: "the task was deleted"}, "Cancelled: the task was deleted")
+			label := "Cancelled: " + why
+			if why == leftChannel {
+				label = ""
+			}
+			a.resolveApproval(ap, worker.Decision{Reason: why}, label)
 		}
 	}
 	delete(a.jobs, ts)
@@ -328,14 +381,19 @@ func (a *Agent) start(ts string) {
 		if err == nil {
 			res, err = a.work.Work(ctx, worker.Task{ID: ts, Transcript: transcript, Approve: approve})
 		}
-		return func() { a.finish(ts, res, err) }
+		return func() { a.finish(ts, j, res, err) }
 	})
 }
 
-func (a *Agent) finish(ts string, res worker.Result, err error) {
-	j := a.jobs[ts]
-	if j == nil {
-		a.cleanup(ts) // deleted while working: the round may have recreated its directory
+// finish applies a round's result to j, the job that started it. A job that
+// is gone, or was replaced (the agent left the channel and was invited back,
+// which recovered the task as a new job), drops the result: the new job runs
+// its own rounds.
+func (a *Agent) finish(ts string, j *job, res worker.Result, err error) {
+	if cur := a.jobs[ts]; cur != j {
+		if cur == nil {
+			a.cleanup(ts) // deleted while working: the round may have recreated its directory
+		}
 		return
 	}
 	j.working, j.cancel = false, nil
@@ -395,11 +453,12 @@ func (a *Agent) transcript(ts string) (string, error) {
 }
 
 // thread reads the task message and all its replies.
-func (a *Agent) thread(ts string) ([]slack.Message, error) {
+func (a *Agent) thread(k string) ([]slack.Message, error) {
+	ch, ts := split(k)
 	var msgs []slack.Message
 	cursor := ""
 	for {
-		page, more, next, err := a.api.GetConversationReplies(&slack.GetConversationRepliesParameters{ChannelID: a.cfg.Channel, Timestamp: ts, Cursor: cursor, Limit: 200})
+		page, more, next, err := a.api.GetConversationReplies(&slack.GetConversationRepliesParameters{ChannelID: ch, Timestamp: ts, Cursor: cursor, Limit: 200})
 		if err != nil {
 			return nil, fmt.Errorf("read thread: %w", err)
 		}
@@ -466,13 +525,15 @@ func (a *Agent) say(ts, text string) error {
 }
 
 // postMsg posts text that is already escaped in the task's thread and returns
-// the new message's ts.
-func (a *Agent) postMsg(ts, escaped string) (string, error) {
-	_, msg, err := a.api.PostMessage(a.cfg.Channel, slack.MsgOptionText(escaped, false), slack.MsgOptionTS(ts))
+// the new message's key.
+func (a *Agent) postMsg(k, escaped string) (string, error) {
+	ch, ts := split(k)
+	_, msg, err := a.api.PostMessage(ch, slack.MsgOptionText(escaped, false), slack.MsgOptionTS(ts))
 	if err != nil {
-		slog.Warn("post", "ts", ts, "err", err)
+		slog.Warn("post", "ts", k, "err", err)
+		return "", err
 	}
-	return msg, err
+	return key(ch, msg), nil
 }
 
 // cutEscaped cuts escaped text to n runes without splitting an entity. It
@@ -512,18 +573,17 @@ func unescape(text string) string {
 	return strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;", "&").Replace(text)
 }
 
-func (a *Agent) ref(ts string) slack.ItemRef { return slack.NewRefToMessage(a.cfg.Channel, ts) }
+func (a *Agent) ref(k string) slack.ItemRef { return slack.NewRefToMessage(split(k)) }
 
 // CheckChannel reads one message of the channel, so a channel the agent
-// cannot read stops it at startup. Otherwise it would run and ignore every
-// event, since each is compared against the configured channel.
+// cannot read stops it at startup instead of being ignored.
 func CheckChannel(api API, channel string) error {
 	_, err := api.GetConversationHistory(&slack.GetConversationHistoryParameters{ChannelID: channel, Limit: 1})
 	switch {
 	case err == nil:
 		return nil
 	case err.Error() == "channel_not_found":
-		return fmt.Errorf("channel %s not found: set channel in the config to the ID of itakeit's channel (in Slack: the channel's name -> About -> Channel ID), the same as in itakeit's config. A private channel needs the agent invited first", channel)
+		return fmt.Errorf("channel %s not found: list the IDs of itakeit's channels in the config's channels (in Slack: the channel's name -> About -> Channel ID), the same as in itakeit's config. A private channel needs the agent invited first", channel)
 	case err.Error() == "not_in_channel":
 		return fmt.Errorf("the agent is not in channel %s: run /invite @<the agent's app> in it", channel)
 	case err.Error() == "missing_scope":
@@ -533,15 +593,30 @@ func CheckChannel(api API, channel string) error {
 }
 
 // Recover rebuilds the owned tasks from the agent's own reactions in the last
-// recover_messages channel messages, so no database is needed. Tasks that were
-// being worked on when the agent stopped are worked on again.
+// recover_messages messages of each channel, so no database is needed. Tasks
+// that were being worked on when the agent stopped are worked on again. With
+// auto_channels the channel listing does it, one channel at a time.
 func (a *Agent) Recover() {
+	if a.cfg.AutoChannels {
+		a.relist()
+	} else {
+		for _, ch := range a.cfg.Channels {
+			a.recoverChannel(ch, "restarted")
+		}
+	}
+	slog.Info("recovered", "tasks", len(a.jobs), "channels", len(a.channels()))
+}
+
+// recoverChannel rebuilds the owned tasks of one channel. why is what
+// interrupted them, as the thread is told: "restarted", or "re-invited" when
+// the agent comes back to a channel it left.
+func (a *Agent) recoverChannel(channel, why string) {
 	var msgs []slack.Message
 	cursor := ""
 	for len(msgs) < a.cfg.Agent.RecoverMessages {
-		resp, err := a.api.GetConversationHistory(&slack.GetConversationHistoryParameters{ChannelID: a.cfg.Channel, Cursor: cursor, Limit: min(200, a.cfg.Agent.RecoverMessages-len(msgs))})
+		resp, err := a.api.GetConversationHistory(&slack.GetConversationHistoryParameters{ChannelID: channel, Cursor: cursor, Limit: min(200, a.cfg.Agent.RecoverMessages-len(msgs))})
 		if err != nil {
-			slog.Warn("recover: history", "err", err)
+			slog.Warn("recover: history", "channel", channel, "err", err)
 			return
 		}
 		msgs = append(msgs, resp.Messages...)
@@ -563,18 +638,18 @@ func (a *Agent) Recover() {
 				held = append(held, act)
 			}
 		}
-		if !claimed {
+		k := key(channel, m.Timestamp)
+		if !claimed || a.jobs[k] != nil {
 			continue
 		}
-		a.jobs[m.Timestamp] = &job{held: held}
+		a.jobs[k] = &job{held: held}
 		switch {
 		case !slices.Contains(held, task.Done) && !slices.Contains(held, task.NeedsInfo) && !slices.Contains(held, task.Blocked):
-			a.recoverRound(m.Timestamp)
+			a.recoverRound(k, why)
 		case a.fix() && (slices.Contains(held, task.NeedsInfo) || slices.Contains(held, task.Blocked)):
-			a.rearmResume(m.Timestamp)
+			a.rearmResume(k)
 		}
 	}
-	slog.Info("recovered", "tasks", len(a.jobs))
 }
 
 func (a *Agent) fix() bool { return a.cfg.Agent.Mode == string(worker.ModeFix) }
@@ -591,15 +666,16 @@ const (
 // expired. In propose mode nothing can have been changed, and the round runs
 // again. In fix mode writes may already have run, so the task waits until the
 // approver (the reporter when there is none) says to resume.
-func (a *Agent) recoverRound(ts string) {
+func (a *Agent) recoverRound(ts, why string) {
 	msgs, err := a.thread(ts)
 	if err != nil {
 		slog.Warn("recover: thread", "ts", ts, "err", err)
 	}
+	ch, _ := split(ts)
 	for _, m := range msgs {
 		if m.User == a.me && pendingApproval(m.Text) {
-			text := m.Text[:strings.LastIndex(m.Text, "\n")] + "\nExpired (agent restarted)"
-			if _, _, _, err := a.api.UpdateMessage(a.cfg.Channel, m.Timestamp, slack.MsgOptionText(text, false)); err != nil {
+			text := m.Text[:strings.LastIndex(m.Text, "\n")] + "\nExpired (agent " + why + ")"
+			if _, _, _, err := a.api.UpdateMessage(ch, m.Timestamp, slack.MsgOptionText(text, false)); err != nil {
 				slog.Warn("recover: expire approval", "msg", m.Timestamp, "err", err)
 			}
 		}
@@ -613,12 +689,12 @@ func (a *Agent) recoverRound(ts string) {
 	a.jobs[ts].resumeBy = []string{who} // [""] when unknown: nobody's reply resumes it
 	if who == "" {
 		// No approver, and the reporter is a bot or unknown: a human takes over.
-		a.say(ts, "I was restarted during this task, and "+humanNow)
+		a.say(ts, "I was "+why+" during this task, and "+humanNow)
 		a.setStatus(ts, task.Blocked)
 		return
 	}
 	slog.Info("recover: asking to resume", "ts", ts, "who", who)
-	if _, err := a.postMsg(ts, fmt.Sprintf("I was restarted during this task, and writes may already have run: see the notices and approvals above. <@%s>: %s", who, resumeAsk)); err != nil {
+	if _, err := a.postMsg(ts, fmt.Sprintf("I was %s during this task, and writes may already have run: see the notices and approvals above. <@%s>: %s", why, who, resumeAsk)); err != nil {
 		// Without the question in the thread a later restart could not find the
 		// gate again, so the task goes to a human instead.
 		a.jobs[ts].resumeBy = []string{""}

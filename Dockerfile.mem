@@ -29,7 +29,7 @@ FROM node:22-slim AS runner
 LABEL org.opencontainers.image.source="https://github.com/nice-pink/itakeit-agent"
 
 # The CLI version the agent's flags and JSON parsing were verified against.
-ARG CLAUDE_CODE_VERSION=2.1.284
+ARG CLAUDE_CODE_VERSION=2.1.285
 # ca-certificates: the Go binary verifies Slack's TLS with the system store.
 # python3: poma-memory's interpreter. It is on PATH, like any interpreter in
 # the image: read entries refuse interpreters, a plain Bash entry does not.

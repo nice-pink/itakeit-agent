@@ -1,0 +1,43 @@
+# itakeit and an itakeit-agent image with kubectl (./Dockerfile), with a
+# kubeconfig written for the container. Paths are relative to the repo root,
+# so run it from there with --project-directory . (see README.md):
+#
+#   docker compose -f examples/kubectl/docker-compose.yml --project-directory . up -d --build
+#
+# Tokens come from the same .env files as the compose files in the repo root;
+# AGENT_KUBECONFIG (in ./.env or the shell) names the kubeconfig file on the
+# host. Run one instance per channel.
+name: itakeit
+
+services:
+  itakeit:
+    image: ghcr.io/nice-pink/itakeit:${ITAKEIT_TAG:-latest}
+    restart: unless-stopped
+    env_file: ${ITAKEIT_DIR:-../itakeit}/.env
+    # db_path in config.yaml is relative (itakeit.db), so running in /data puts
+    # the database on the volume.
+    working_dir: /data
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - itakeit-data:/data
+
+  agent:
+    build:
+      context: examples/kubectl
+      args:
+        BASE: ${ITAKEIT_AGENT_BASE:-ghcr.io/nice-pink/itakeit-agent:latest}
+    image: itakeit-agent-kubectl:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Overrides the host path .env holds for scripts/tmux.sh. With
+      # agent.env: [KUBECONFIG], fix mode copies this file into each session's
+      # fresh HOME; propose mode and allow_real_home read it in place.
+      KUBECONFIG: /home/node/.kube/config
+      CLOUDSDK_CONFIG: ""
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ${AGENT_KUBECONFIG:?set AGENT_KUBECONFIG to a kubeconfig written for the container}:/home/node/.kube/config:ro
+
+volumes:
+  itakeit-data:

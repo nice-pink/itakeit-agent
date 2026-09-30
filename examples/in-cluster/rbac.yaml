@@ -1,0 +1,41 @@
+# What the agent's kubectl may do is what this ServiceAccount may do, whatever
+# the tool entries in config.yaml allow: keep these grants no wider than the
+# entries need.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: itakeit-agent
+---
+# Read entries such as Bash(kubectl get *): the built-in view role reads most
+# resources in every namespace. It does not read Secrets, but it does read
+# ConfigMaps and pod specs with their env, so anything kept there can be
+# quoted into Slack. Bind it per namespace (a RoleBinding to ClusterRole view)
+# to narrow what the agent sees.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: itakeit-agent-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: itakeit-agent
+    namespace: itakeit
+---
+# The write entry Bash(kubectl rollout restart *) patches the pod template of a
+# Deployment, StatefulSet or DaemonSet. patch on a pod template can set any
+# image, command, ServiceAccount or privileged container, so it amounts to
+# control of everything that namespace's pods can reach. This ClusterRole
+# grants nothing by itself: restart-binding.yaml binds it in each namespace
+# where restarts may happen. A ClusterRoleBinding instead would hand the agent
+# (and anyone with its token) every namespace, kube-system included.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: itakeit-agent-restart
+rules:
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets]
+    verbs: [get, list, patch]

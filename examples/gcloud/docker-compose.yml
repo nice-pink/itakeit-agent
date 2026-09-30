@@ -1,0 +1,47 @@
+# itakeit and an itakeit-agent image with gcloud (./Dockerfile). Paths are
+# relative to the repo root, so run it from there with --project-directory .
+# (examples/gcloud/README.md has the one-time login):
+#
+#   docker compose -f examples/gcloud/docker-compose.yml --project-directory . up -d --build
+#
+# Tokens come from the same .env files as the compose files in the repo root.
+# Run one instance per channel.
+name: itakeit
+
+services:
+  itakeit:
+    image: ghcr.io/nice-pink/itakeit:${ITAKEIT_TAG:-latest}
+    restart: unless-stopped
+    env_file: ${ITAKEIT_DIR:-../itakeit}/.env
+    # db_path in config.yaml is relative (itakeit.db), so running in /data puts
+    # the database on the volume.
+    working_dir: /data
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - itakeit-data:/data
+
+  agent:
+    build:
+      context: examples/gcloud
+      args:
+        BASE: ${ITAKEIT_AGENT_BASE:-ghcr.io/nice-pink/itakeit-agent:latest}
+    image: itakeit-agent-gcloud:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # .env holds host paths for scripts/tmux.sh, which mean nothing here:
+      # kubectl and gcloud use the defaults under /home/node, the volumes below.
+      KUBECONFIG: ""
+      CLOUDSDK_CONFIG: ""
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      # The gcloud login and the kubeconfig get-credentials writes. Tool
+      # sessions see them only with agent.allow_real_home: true (fix mode) or
+      # in propose mode.
+      - gcloud:/home/node/.config/gcloud
+      - kube:/home/node/.kube
+
+volumes:
+  itakeit-data:
+  gcloud:
+  kube:

@@ -1,0 +1,69 @@
+# itakeit itself, with its SQLite database on a volume. Leave this file out of
+# kustomization.yaml if itakeit runs elsewhere; set ITAKEIT_DATABASE_URL in its
+# Secret for Postgres instead of the volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: itakeit-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: itakeit
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: itakeit
+  template:
+    metadata:
+      labels:
+        app: itakeit
+    spec:
+      # itakeit makes no Kubernetes calls.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532 # the image's user
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: itakeit
+          image: ghcr.io/nice-pink/itakeit:latest
+          # db_path in config.yaml is relative (itakeit.db), so running in
+          # /data puts the database on the volume.
+          workingDir: /data
+          envFrom:
+            - secretRef:
+                name: itakeit
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: itakeit-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: itakeit-data

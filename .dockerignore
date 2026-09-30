@@ -1,1 +1,24 @@
 homepage/
+# Secrets and local state: the builder stage copies the whole context, so
+# anything left here lands in the local build cache.
+.env
+.env.*
+config.yaml
+*.db
+*.db-shm
+*.db-wal
+memory/
+knowledge/
+bin/
+.agent/
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+slack-app-manifest.yaml
+.playwright-mcp/
+.github/
+.gitignore
+.git/
+events.jsonl
+cover.out
+.DS_Store

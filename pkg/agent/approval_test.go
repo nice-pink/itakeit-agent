@@ -79,9 +79,15 @@ func asksOnce(w *fakeWorker) chan worker.Decision {
 	return got
 }
 
+// reaction reacts on msg, a message key (an approval's msg) or a plain ts in
+// channel.
 func reaction(user, name, msg string) slackevents.EventsAPIEvent {
+	ch, ts := channel, msg
+	if c, t, ok := strings.Cut(msg, "-"); ok {
+		ch, ts = c, t
+	}
 	return slackevents.EventsAPIEvent{InnerEvent: slackevents.EventsAPIInnerEvent{Data: &slackevents.ReactionAddedEvent{
-		User: user, Reaction: name, Item: slackevents.Item{Type: "message", Channel: channel, Timestamp: msg}}}}
+		User: user, Reaction: name, Item: slackevents.Item{Type: "message", Channel: ch, Timestamp: ts}}}}
 }
 
 // startTask posts a task, lets the claim delay pass, and waits until the
@@ -122,8 +128,8 @@ func TestApprovalByApprover(t *testing.T) {
 	if !d.Allow || d.By != approver {
 		t.Fatalf("decision = %+v", d)
 	}
-	pump(func() bool { return !a.jobs["1.0"].working })
-	if u := api.updates[ap.msg]; !strings.HasSuffix(u, "\nApproved by <@UAPP> at "+time.Now().UTC().Format("15:04")+" UTC") && !strings.Contains(u, "Approved by <@UAPP>") {
+	pump(func() bool { return !a.jobs[key(channel, "1.0")].working })
+	if u := api.updates[tsOf(ap.msg)]; !strings.HasSuffix(u, "\nApproved by <@UAPP> at "+time.Now().UTC().Format("15:04")+" UTC") && !strings.Contains(u, "Approved by <@UAPP>") {
 		t.Errorf("approval message = %q", u)
 	}
 	reply := api.calls[slices.IndexFunc(api.calls, func(c string) bool { return strings.Contains(c, "Restarted.") })]
@@ -143,13 +149,13 @@ func TestApprovalDeniedAndTimedOut(t *testing.T) {
 		// The event was lost, but the approver's reaction is on the message.
 		"lost event": {func(_ *Agent, api *fakeAPI, ap *approval, fire func()) {
 			api.mu.Lock()
-			api.reactions[ap.msg] = append(api.reactions[ap.msg], slack.ItemReaction{Name: "heavy_check_mark", Users: []string{approver}})
+			api.reactions[tsOf(ap.msg)] = append(api.reactions[tsOf(ap.msg)], slack.ItemReaction{Name: "heavy_check_mark", Users: []string{approver}})
 			api.mu.Unlock()
 			fire()
 		}, true, "Approved by <@UAPP>"},
 		"both emoji": {func(_ *Agent, api *fakeAPI, ap *approval, fire func()) {
 			api.mu.Lock()
-			api.reactions[ap.msg] = append(api.reactions[ap.msg], slack.ItemReaction{Name: "heavy_check_mark", Users: []string{approver}}, slack.ItemReaction{Name: "x", Users: []string{approver}})
+			api.reactions[tsOf(ap.msg)] = append(api.reactions[tsOf(ap.msg)], slack.ItemReaction{Name: "heavy_check_mark", Users: []string{approver}}, slack.ItemReaction{Name: "x", Users: []string{approver}})
 			api.mu.Unlock()
 			fire()
 		}, false, "Denied by <@UAPP>"},
@@ -163,8 +169,8 @@ func TestApprovalDeniedAndTimedOut(t *testing.T) {
 			if d := <-got; d.Allow != c.allow {
 				t.Fatalf("decision = %+v, want allow %v", d, c.allow)
 			}
-			pump(func() bool { return !a.jobs["1.0"].working })
-			if u := api.updates[ap.msg]; !strings.Contains(u, c.label) {
+			pump(func() bool { return !a.jobs[key(channel, "1.0")].working })
+			if u := api.updates[tsOf(ap.msg)]; !strings.Contains(u, c.label) {
 				t.Fatalf("approval message = %q, want %q", u, c.label)
 			}
 		})
@@ -212,7 +218,7 @@ func TestNoApproverPostsNotice(t *testing.T) {
 	if d := <-got; !d.Allow || d.By != "" {
 		t.Fatalf("decision = %+v", d)
 	}
-	pump(func() bool { return !a.jobs["1.0"].working })
+	pump(func() bool { return !a.jobs[key(channel, "1.0")].working })
 	notice := slices.IndexFunc(api.calls, func(c string) bool { return strings.Contains(c, "Running `Bash` (write 1 of max 20):") })
 	reply := slices.IndexFunc(api.calls, func(c string) bool { return strings.Contains(c, "Restarted.") })
 	if notice < 0 || reply < notice || !strings.Contains(api.calls[reply], "allowed by config, ran") {
@@ -230,7 +236,7 @@ func TestForgetCancelsRound(t *testing.T) {
 	if d := <-got; d.Allow {
 		t.Fatal("a deleted task's write was allowed")
 	}
-	if u := api.updates[ap.msg]; !strings.Contains(u, "Cancelled: the task was deleted") {
+	if u := api.updates[tsOf(ap.msg)]; !strings.Contains(u, "Cancelled: the task was deleted") {
 		t.Fatalf("approval message = %q", u)
 	}
 	pump(func() bool { return len(w.cleaned) >= 2 }) // on delete, and again when the round ends
@@ -251,7 +257,7 @@ func TestFooterOnErrorAndTruncation(t *testing.T) {
 			w.onWork = func(context.Context, worker.Task) (worker.Result, error) { return res.r, res.err }
 			a.Handle(msg("1.0", "", "UREP", "x"))
 			fire()
-			pump(func() bool { j := a.jobs["1.0"]; return j != nil && !j.working && len(api.calls) > 3 })
+			pump(func() bool { j := a.jobs[key(channel, "1.0")]; return j != nil && !j.working && len(api.calls) > 3 })
 			reply := api.calls[slices.IndexFunc(api.calls, func(c string) bool { return strings.Contains(c, "Actions taken") })]
 			if n := len([]rune(reply)); n > 40000 || !strings.Contains(reply, "approved by <@UAPP>, ran") {
 				t.Fatalf("reply of %d runes: ...%s", n, reply[max(0, len(reply)-300):])
@@ -284,11 +290,11 @@ func TestRecoverFixModeAsks(t *testing.T) {
 	w.results = []worker.Result{{Status: task.Done, Reply: "Resumed."}}
 	a.Handle(msg("1.6", "1.0", "UREP", "go on"))
 	a.Handle(msg("1.7", "1.0", "UREP", "<@"+me+"> go on"))
-	if j := a.jobs["1.0"]; j.working || w.rounds() != 0 { // a resumed round sets working at once
+	if j := a.jobs[key(channel, "1.0")]; j.working || w.rounds() != 0 { // a resumed round sets working at once
 		t.Fatal("the reporter resumed a task only the approver may resume")
 	}
 	a.Handle(msg("1.8", "1.0", approver, "yes, resume"))
-	pump(func() bool { return w.rounds() == 1 && !a.jobs["1.0"].working })
+	pump(func() bool { return w.rounds() == 1 && !a.jobs[key(channel, "1.0")].working })
 }
 
 // A second restart keeps the gate while the question is unanswered.
@@ -299,12 +305,12 @@ func TestRecoverRearmsResumeGate(t *testing.T) {
 	api.threads["1.0"] = []slack.Message{{Msg: slack.Msg{User: me, Text: "I was restarted ... <@UAPP>: " + resumeAsk, Timestamp: "1.5"}},
 		{Msg: slack.Msg{User: "UREP", Text: "hurry", Timestamp: "1.6"}}}
 	a.Recover()
-	if got := a.jobs["1.0"].resumeBy; !slices.Equal(got, []string{approver}) {
+	if got := a.jobs[key(channel, "1.0")].resumeBy; !slices.Equal(got, []string{approver}) {
 		t.Fatalf("resumeBy = %v", got)
 	}
 	w.results = []worker.Result{{Status: task.Done, Reply: "ok"}}
 	a.Handle(msg("1.7", "1.0", "UREP", "please"))
-	if j := a.jobs["1.0"]; j.working || w.rounds() != 0 { // a resumed round sets working at once
+	if j := a.jobs[key(channel, "1.0")]; j.working || w.rounds() != 0 { // a resumed round sets working at once
 		t.Fatal("the reporter resumed the task")
 	}
 	// Answered by the approver before the restart: no gate.
@@ -312,7 +318,7 @@ func TestRecoverRearmsResumeGate(t *testing.T) {
 	api.history = []slack.Message{{Msg: slack.Msg{Timestamp: "2.0", Reactions: []slack.ItemReaction{
 		{Name: "raising_hand", Users: []string{me}}, {Name: "question", Users: []string{me}}}}}}
 	a.Recover()
-	if got := a.jobs["2.0"].resumeBy; got != nil {
+	if got := a.jobs[key(channel, "2.0")].resumeBy; got != nil {
 		t.Fatalf("answered question kept its gate: %v", got)
 	}
 }
@@ -329,7 +335,7 @@ func TestRecoverBotReporter(t *testing.T) {
 		t.Fatalf("status = %v, want blocked", got)
 	}
 	a.Handle(msg("1.6", "1.0", "UOTHER", "resume"))
-	if j := a.jobs["1.0"]; j.working || w.rounds() != 0 { // a resumed round sets working at once
+	if j := a.jobs[key(channel, "1.0")]; j.working || w.rounds() != 0 { // a resumed round sets working at once
 		t.Fatal("someone resumed a task handed to a human")
 	}
 	b, api2, _, _, _ := setupFix(t, "  mode: fix\n  allow_unapproved_writes: true\n  tools:\n    write: [\"Bash(kubectl rollout restart *)\"]\n")
@@ -337,7 +343,7 @@ func TestRecoverBotReporter(t *testing.T) {
 		{Name: "raising_hand", Users: []string{me}}, {Name: "no_entry", Users: []string{me}}}}}}
 	api2.threads["1.0"] = []slack.Message{{Msg: slack.Msg{User: me, Text: "I was restarted during this task, and " + humanNow, Timestamp: "1.5"}}}
 	b.Recover()
-	if got := b.jobs["1.0"].resumeBy; !slices.Equal(got, []string{""}) {
+	if got := b.jobs[key(channel, "1.0")].resumeBy; !slices.Equal(got, []string{""}) {
 		t.Fatalf("after a second restart resumeBy = %v", got)
 	}
 }
@@ -351,7 +357,7 @@ func TestRecoverRearmFailsClosed(t *testing.T) {
 	a.Recover()
 	api.failRead = false
 	a.Handle(msg("1.6", "1.0", "UREP", "resume"))
-	if j := a.jobs["1.0"]; j.working || w.rounds() != 0 { // a resumed round sets working at once
+	if j := a.jobs[key(channel, "1.0")]; j.working || w.rounds() != 0 { // a resumed round sets working at once
 		t.Fatal("a reply resumed a task whose gate could not be checked")
 	}
 }
@@ -365,7 +371,7 @@ func TestRecoverResumeAlreadyApproved(t *testing.T) {
 		{Msg: slack.Msg{User: approver, Text: "go ahead", Timestamp: "1.6"}}}
 	w.results = []worker.Result{{Status: task.Done, Reply: "ok"}}
 	a.Recover()
-	pump(func() bool { return w.rounds() == 1 && !a.jobs["1.0"].working })
+	pump(func() bool { return w.rounds() == 1 && !a.jobs[key(channel, "1.0")].working })
 }
 
 // Without an approver, the reporter may resume.
@@ -374,12 +380,12 @@ func TestRecoverFixModeReporterResumes(t *testing.T) {
 	api.history = []slack.Message{{Msg: slack.Msg{Timestamp: "1.0", Reactions: []slack.ItemReaction{
 		{Name: "raising_hand", Users: []string{me}}, {Name: "construction", Users: []string{me}}}}}}
 	a.Recover()
-	if got := a.jobs["1.0"].resumeBy; !slices.Equal(got, []string{"UREP"}) {
+	if got := a.jobs[key(channel, "1.0")].resumeBy; !slices.Equal(got, []string{"UREP"}) {
 		t.Fatalf("resumeBy = %v", got)
 	}
 	w.results = []worker.Result{{Status: task.Done, Reply: "ok"}}
 	a.Handle(msg("1.6", "1.0", "UREP", "resume"))
-	pump(func() bool { return w.rounds() == 1 && !a.jobs["1.0"].working })
+	pump(func() bool { return w.rounds() == 1 && !a.jobs[key(channel, "1.0")].working })
 }
 
 func TestCodeBlockAndEscapeLiteral(t *testing.T) {
@@ -390,3 +396,6 @@ func TestCodeBlockAndEscapeLiteral(t *testing.T) {
 		t.Fatalf("cutEscaped = %q", got)
 	}
 }
+
+// tsOf is the ts of a message key, as the fake API stores it.
+func tsOf(k string) string { _, ts := split(k); return ts }

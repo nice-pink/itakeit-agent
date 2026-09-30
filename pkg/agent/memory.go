@@ -33,36 +33,40 @@ func (a *Agent) WithMemory(l Learner) *Agent {
 // which the agent's user posts too.
 const learnAsk = " save this to memory?"
 
-// ref ends a pending request's last line: the task ts and the signature.
+// ref ends a pending request's last line: the task ts and the signature. The
+// ts alone, without the channel, so requests posted before the agent served
+// several channels still verify; a request copied into another channel can
+// only save the same learning.
 func ref(ts, sig string) string { return fmt.Sprintf(" (ref %s %s)", ts, sig) }
 
 var refLine = regexp.MustCompile(`^React :.* \(ref ([0-9]{1,20}\.[0-9]{1,10}) ([0-9a-f]{64})\)$`)
 
 // learn saves a done task's learning, or with memory.approval asks the
 // approver first. Without approval the thread still shows what was saved.
-func (a *Agent) learn(ts, text string) {
+func (a *Agent) learn(k, text string) {
 	if a.learner == nil || strings.TrimSpace(text) == "" {
 		return
 	}
+	_, ts := split(k)
 	s := a.cfg.Agent
 	if !s.Memory.NeedsApproval() {
 		a.spawn(func() func() {
 			err := a.learner.Save(a.ctx, ts, text)
 			return func() {
 				if err != nil {
-					slog.Warn("save learning", "ts", ts, "err", err)
-					a.say(ts, "I could not save what I learned to memory. The agent's log says why.")
+					slog.Warn("save learning", "ts", k, "err", err)
+					a.say(k, "I could not save what I learned to memory. The agent's log says why.")
 					return
 				}
-				slog.Info("learning saved", "ts", ts)
-				a.postMsg(ts, "Saved to memory:\n"+codeBlock(text))
+				slog.Info("learning saved", "ts", k)
+				a.postMsg(k, "Saved to memory:\n"+codeBlock(text))
 			}
 		})
 		return
 	}
 	head := fmt.Sprintf("<@%s>%s\n%s", s.Approver, learnAsk, codeBlock(text))
 	last := fmt.Sprintf("React :%s: to save it or :%s: to drop it.", s.ApprovalEmoji.Approve, s.ApprovalEmoji.Deny) + ref(ts, a.learner.Sign(ts, text))
-	msg, err := a.postMsg(ts, head+"\n"+last)
+	msg, err := a.postMsg(k, head+"\n"+last)
 	if err != nil {
 		return
 	}
@@ -71,7 +75,7 @@ func (a *Agent) learn(ts, text string) {
 			slog.Warn("add learning reaction", "msg", msg, "err", err)
 		}
 	}
-	slog.Info("learning waits for approval", "ts", ts, "msg", msg)
+	slog.Info("learning waits for approval", "ts", k, "msg", msg)
 }
 
 // onLearningReaction saves or drops a learning when the approver reacts to
@@ -79,7 +83,7 @@ func (a *Agent) learn(ts, text string) {
 // the agent posted it, it is still pending, and its signature matches.
 func (a *Agent) onLearningReaction(ev *slackevents.ReactionAddedEvent) {
 	s := a.cfg.Agent
-	msg := ev.Item.Timestamp
+	msg := key(ev.Item.Channel, ev.Item.Timestamp)
 	if a.learner == nil || !s.Memory.NeedsApproval() || ev.User != s.Approver || ev.ItemUser != a.me ||
 		(ev.Reaction != s.ApprovalEmoji.Approve && ev.Reaction != s.ApprovalEmoji.Deny) || a.learned[msg] {
 		return
@@ -98,7 +102,7 @@ func (a *Agent) onLearningReaction(ev *slackevents.ReactionAddedEvent) {
 	a.learned[msg] = true // a second reaction before the update lands saves nothing twice
 	body := m.Text[:strings.LastIndex(m.Text, "\n")]
 	update := func(label string) {
-		if _, _, _, err := a.api.UpdateMessage(a.cfg.Channel, msg, slack.MsgOptionText(body+"\n"+label, false)); err != nil {
+		if _, _, _, err := a.api.UpdateMessage(ev.Item.Channel, ev.Item.Timestamp, slack.MsgOptionText(body+"\n"+label, false)); err != nil {
 			slog.Warn("update learning request", "msg", msg, "err", err)
 		}
 	}

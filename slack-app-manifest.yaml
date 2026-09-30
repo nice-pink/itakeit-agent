@@ -11,6 +11,8 @@ oauth_config:
     bot:
     - channels:history
     - groups:history
+    - channels:read
+    - groups:read
     - chat:write
     - reactions:read
     - reactions:write
@@ -20,6 +22,14 @@ settings:
     - message.channels
     - message.groups
     - reaction_added
+    - member_joined_channel
+    - member_left_channel
+    - channel_left
+    - group_left
+    - channel_archive
+    - group_archive
+    - channel_unarchive
+    - group_unarchive
   org_deploy_enabled: false
   socket_mode_enabled: true
   token_rotation_enabled: false
