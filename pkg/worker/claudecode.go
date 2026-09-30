@@ -351,7 +351,9 @@ func (c *cli) act(ctx context.Context, system, user, effort, cwd string, approve
 			return streamResult{}, err
 		}
 		defer os.RemoveAll(home)
-		s.env = freshHome(s.env, home)
+		if s.env, err = freshHome(s.env, home); err != nil {
+			return streamResult{}, err
+		}
 	}
 	s.decide = func(tool string, input json.RawMessage) (Verdict, string) { return c.tools.decide(tool, input, cwd) }
 	s.approve = approve
@@ -362,11 +364,42 @@ func (c *cli) act(ctx context.Context, system, user, effort, cwd string, approve
 
 // freshHome points HOME at home and drops CLAUDE_CONFIG_DIR, which would
 // move the CLI's config home (shell snapshots, .claude.json) back out of it.
-func freshHome(env []string, home string) []string {
+//
+// It also copies the file KUBECONFIG names (agent.env) to home/.kube/config
+// and points KUBECONFIG at the copy. With CLAUDE_CODE_SUBPROCESS_ENV_SCRUB the
+// CLI removes KUBECONFIG from the Bash tool's shell, along with CLOUDSDK_CONFIG,
+// AWS_CONFIG_FILE and other credential path variables (read from the 2.1.285
+// binary, verified live), so kubectl in a fresh HOME would find no config. A
+// copy, not a symlink, so a session cannot change the operator's file. One
+// file only: without KUBECONFIG kubectl reads ~/.kube/config alone. Auth
+// plugins inherit the scrubbed shell too, so gke-gcloud-auth-plugin needs
+// CLOUDSDK_CONFIG from the kubeconfig's exec env.
+func freshHome(env []string, home string) ([]string, error) {
 	out := slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
 		return strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "CLAUDE_CONFIG_DIR=")
 	})
-	return append(out, "HOME="+home)
+	out = append(out, "HOME="+home)
+	i := slices.IndexFunc(out, func(kv string) bool { return strings.HasPrefix(kv, "KUBECONFIG=") })
+	if i < 0 || out[i] == "KUBECONFIG=" {
+		return out, nil
+	}
+	src := strings.TrimPrefix(out[i], "KUBECONFIG=")
+	if strings.ContainsRune(src, filepath.ListSeparator) {
+		return nil, fmt.Errorf("KUBECONFIG lists several files (%s): fix mode copies one file into each session's HOME, so merge them into one", src)
+	}
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return nil, fmt.Errorf("KUBECONFIG: %w", err)
+	}
+	dst := filepath.Join(home, ".kube", "config")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(dst, b, 0o600); err != nil {
+		return nil, err
+	}
+	out[i] = "KUBECONFIG=" + dst
+	return out, nil
 }
 
 func (c *cli) stream(system, user, effort, cwd string, tools, extra []string, timeout time.Duration, dest any) (*stream, error) {
@@ -456,7 +489,9 @@ func (c *cli) probeTools(ctx context.Context) error {
 			return err
 		}
 		if home != "" {
-			s.env = freshHome(s.env, home)
+			if s.env, err = freshHome(s.env, home); err != nil {
+				return err
+			}
 		}
 		s.decide = func(string, json.RawMessage) (Verdict, string) { return Deny, "startup check: not run" }
 		sr, err := s.run(ctx, &out)

@@ -34,12 +34,15 @@ func fakeStream(t *testing.T, tools *Tools, script ...string) (w *Claude, args f
 	t.Setenv("FAKE_STDIN", filepath.Join(dir, "stdin"))
 	t.Setenv("FAKE_SCRIPT", scriptFile)
 	t.Setenv("FAKE_CHILD", filepath.Join(dir, "child"))
+	// The developer's own KUBECONFIG (a list, a missing file) would fail every
+	// fix-mode session. CLIEnv reads it per session, so a test can set it after.
+	t.Setenv("KUBECONFIG", "")
 	t.Setenv("FAKE_OUT", `{"type":"result","subtype":"success","is_error":false,"structured_output":{"email":""}}`)
 	bin, _ := filepath.Abs("testdata/fake-claude")
 	if tools == nil {
 		tools = &Tools{Mode: ModePropose, Read: []Entry{{Tool: "Read"}, {Tool: "Bash", Prefix: "ls"}}, WorkTimeout: 10 * time.Second}
 	}
-	w, err := NewClaudeCode(bin, "opus", "investigating", t.TempDir(), []string{"FAKE_ARGS", "FAKE_STDIN", "FAKE_SCRIPT", "FAKE_CHILD", "FAKE_OUT"}, tools)
+	w, err := NewClaudeCode(bin, "opus", "investigating", t.TempDir(), []string{"FAKE_ARGS", "FAKE_STDIN", "FAKE_SCRIPT", "FAKE_CHILD", "FAKE_OUT", "KUBECONFIG"}, tools)
 	if err != nil {
 		t.Fatal(err)
 	}

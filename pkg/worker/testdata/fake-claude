@@ -11,6 +11,8 @@ case " $* " in
 	pwd > "$FAKE_ARGS.pwd"
 	echo "$HOME" > "$FAKE_ARGS.home"
 	echo "${CLAUDE_CONFIG_DIR:-unset}" > "$FAKE_ARGS.ccd"
+	echo "${KUBECONFIG:-unset}" > "$FAKE_ARGS.kc"
+	cat "$HOME/.kube/config" > "$FAKE_ARGS.kube" 2>/dev/null
 	while IFS= read -r line <&3; do
 		case "$line" in
 		"out "*) printf '%s\n' "${line#out }" ;;

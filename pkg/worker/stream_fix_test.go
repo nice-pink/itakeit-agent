@@ -381,6 +381,34 @@ func TestStreamFixModeFreshHome(t *testing.T) {
 	}
 }
 
+// A fix-mode session gets a copy of the KUBECONFIG file in its fresh HOME,
+// since the CLI scrubs KUBECONFIG from the Bash tool's shell. The operator's
+// file is left alone, and a list of files is refused.
+func TestStreamFixModeKubeconfig(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(src, []byte("current-context: gke-test\n"), 0o600)
+	w, _, _, _ := fakeStream(t, fixTools(10*time.Second), "in", fixInit, resultLine)
+	t.Setenv("KUBECONFIG", src)
+	if _, err := w.Work(context.Background(), Task{ID: testTask, Transcript: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	read := func(ext string) string {
+		b, _ := os.ReadFile(os.Getenv("FAKE_ARGS") + ext)
+		return strings.TrimSpace(string(b))
+	}
+	if kc, home := read(".kc"), read(".home"); kc != filepath.Join(home, ".kube", "config") || read(".kube") != "current-context: gke-test" {
+		t.Fatalf("KUBECONFIG = %s, HOME = %s, copy = %q", kc, home, read(".kube"))
+	}
+	if b, _ := os.ReadFile(src); string(b) != "current-context: gke-test\n" {
+		t.Fatalf("source changed: %q", b)
+	}
+	w, _, _, _ = fakeStream(t, fixTools(10*time.Second), "in", fixInit, resultLine)
+	t.Setenv("KUBECONFIG", src+string(filepath.ListSeparator)+src)
+	if _, err := w.Work(context.Background(), Task{ID: testTask, Transcript: "x"}); err == nil || !strings.Contains(err.Error(), "several files") {
+		t.Fatalf("list of files: err = %v", err)
+	}
+}
+
 // What the approver sees is scrubbed, and says so.
 func TestApprovalDisplayScrubbed(t *testing.T) {
 	ap := &approvals{answer: allowAs("UAPP")}
