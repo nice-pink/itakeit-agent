@@ -167,6 +167,19 @@ It keeps no database. On start it reads the agent's own reactions on the last `r
 ./build && AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... ./bin/itakeit-agent -config config.yaml
 ```
 
+To run itakeit and the agent together on one machine, `scripts/tmux.sh` starts both side by side in the tmux session `itakeit` (itakeit left, agent right), both with this repo's `config.yaml`:
+
+```
+./scripts/tmux.sh && tmux attach -t itakeit
+```
+
+- Tokens come from two `.env` files, each mode 600 and gitignored. The agent's is `./.env` (see `.env.example`) with `AGENT_SLACK_BOT_TOKEN`, `AGENT_SLACK_APP_TOKEN`, and for fix mode `CLAUDE_CODE_OAUTH_TOKEN` and `KUBECONFIG`. itakeit's is `$ITAKEIT_DIR/.env` with `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`.
+- `ITAKEIT_BIN` in `./.env` names the itakeit binary. It is required.
+- `ITAKEIT_DIR`, also in `./.env`, is where itakeit runs (default `../itakeit`). itakeit's `db_path` is relative to that directory, so its database lives there too. Relative paths in both variables are from this repo.
+- Each pane starts from an empty environment with only `HOME`, `PATH`, `USER`, `LOGNAME`, `LANG` and `TMPDIR`, then sources its app's `.env`. The tmux server's own environment, which can hold other Claude Code sessions' `CLAUDE_CODE_*` variables, never reaches the agent, and no token appears in a command line. Anything else an app needs, such as proxy or CA variables, goes into its `.env`.
+- The script refuses to start when a binary is missing or not executable, when a `.env` is not yours, is readable or writable by others, has an ACL, or lacks a required variable, when the session already exists, or when either app already runs. It needs tmux 3.0 or later.
+- A pane whose app exits keeps its last output. `Ctrl-b d` detaches, and `tmux kill-session -t itakeit` stops both. Ctrl-C in a pane stops that app.
+
 The image includes the Claude Code CLI, pinned by the `CLAUDE_CODE_VERSION` build arg to the version the agent was tested with. Pass `CLAUDE_CODE_OAUTH_TOKEN` for `backend: claude-code`, or `ANTHROPIC_API_KEY` for `backend: api`. The CLI writes its state to `/home/node` and `/tmp` on every run, so a read-only container needs both writable, for example `--read-only --tmpfs /tmp --tmpfs /home/node:uid=1000,gid=1000`. A plain `--tmpfs /home/node` is owned by root and the CLI fails on every task.
 
 Knowledge paths resolve against `/config`, so mount the files next to the config:
