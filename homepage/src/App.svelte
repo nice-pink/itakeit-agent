@@ -6,14 +6,14 @@
   import { itakeit, repo } from './lib/site'
 
   const features = [
-    { icon: '🙋', title: 'Claims like a teammate', text: 'After a short delay, so people get the first pick, it asks Claude whether its skills cover the task. If so, it reacts 🙋 and says in the thread what it will do.' },
-    { icon: '🧵', title: 'Works in the thread', text: 'It replies in the task thread and sets ✅ done, ❓ needs info or ⛔ blocked. An answer to its question, or a mention, starts another round.' },
-    { icon: '📚', title: 'Knows your docs', text: 'Runbooks, architecture notes and FAQs you list as knowledge go with every request, cached, so it answers from your facts rather than a guess.' },
-    { icon: '🔍', title: 'Investigates with tools', text: 'Give it read-only commands and MCP tools, such as kubectl get or an issue tracker, and it looks before it answers, then proposes the fix.' },
-    { icon: '✍️', title: 'Fixes, with your sign-off', text: 'In fix mode it can make the changes you allow. Each one is posted before it runs, and with an approver it runs only after their ✔️.' },
-    { icon: '🔒', title: 'Decides every tool call', text: 'The Claude CLI runs nothing on its own: each call goes to the agent, which checks it against your allow-list. The Slack tokens never reach the CLI.' },
-    { icon: '🧩', title: 'Plugs into itakeit', text: 'It never talks to itakeit directly. itakeit sees one more user, so ownership, pings and reminders work for the agent exactly as for people.' },
-    { icon: '💤', title: 'No database', text: 'Its state is its own reactions in the channel. After a restart it picks up the tasks it was working on. Tasks posted while it was down are not triaged.' },
+    { title: 'Claims like a teammate', text: 'After a short delay, so people get the first pick, it asks Claude whether its skills cover the task. If so, it reacts 🙋 and says in the thread what it will do.' },
+    { title: 'Works in the thread', text: 'It replies in the task thread and sets ✅ done, ❓ needs info or ⛔ blocked. An answer to its question, or a mention, starts another round.' },
+    { title: 'Knows your docs', text: 'Runbooks, architecture notes and FAQs you list as knowledge go with every request, cached, so it answers from your facts rather than a guess.' },
+    { title: 'Investigates with tools', text: 'Give it read-only commands and MCP tools, such as kubectl get or an issue tracker, and it looks before it answers, then proposes the fix.' },
+    { title: 'Fixes, with your sign-off', text: 'In fix mode it can make the changes you allow. Each one is posted before it runs, and with an approver it runs only after their ✔️.' },
+    { title: 'Decides every tool call', text: 'The Claude CLI runs nothing on its own: each call goes to the agent, which checks it against your allow-list. The Slack tokens never reach the CLI.' },
+    { title: 'Plugs into itakeit', text: 'It never talks to itakeit directly. itakeit sees one more user, so ownership, pings and reminders work for the agent exactly as for people.' },
+    { title: 'No database', text: 'Its state is its own reactions in the channel. After a restart it picks up the tasks it was working on. Tasks posted while it was down are not triaged.' },
   ]
 
   const modes = [
@@ -117,7 +117,6 @@ agent:
       <div class="grid">
         {#each features as f (f.title)}
           <article class="card">
-            <div class="icon"><Emojify text={f.icon} /></div>
             <h3>{f.title}</h3>
             <p><Emojify text={f.text} /></p>
           </article>
@@ -285,7 +284,6 @@ agent:
   .card { background: var(--panel); border: 2px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); padding: 1.2rem 1.3rem; }
   .card h3 { margin: 0.4rem 0 0.3rem; font-size: 1.1rem; }
   .card p { margin: 0; color: var(--muted); font-size: 0.95rem; }
-  .icon { font-size: 1.7rem; }
   .modes-title { margin: 3rem 0 1rem; font-size: 1.4rem; }
 
   .setup { padding-top: 4rem; padding-bottom: 4rem; }
