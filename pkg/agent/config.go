@@ -59,7 +59,10 @@ type Settings struct {
 	// Approver is the Slack user whose reaction every write needs in fix mode.
 	Approver              string `yaml:"approver"`
 	AllowUnapprovedWrites bool   `yaml:"allow_unapproved_writes"`
-	ApprovalEmoji         struct {
+	// AllowRealHome keeps the agent's HOME for fix-mode sessions instead of a
+	// fresh one each (worker.Tools.RealHome).
+	AllowRealHome bool `yaml:"allow_real_home"`
+	ApprovalEmoji struct {
 		Approve string `yaml:"approve"`
 		Deny    string `yaml:"deny"`
 	} `yaml:"approval_emoji"`
@@ -109,7 +112,7 @@ func (s Settings) WorkerTools() *worker.Tools {
 		return nil
 	}
 	t := &worker.Tools{Mode: worker.Mode(s.Mode), Read: s.ToolEntries, Write: s.WriteEntries, Approval: s.Approver != "",
-		WorkTimeout: time.Duration(s.WorkTimeoutMinutes) * time.Minute}
+		WorkTimeout: time.Duration(s.WorkTimeoutMinutes) * time.Minute, RealHome: s.AllowRealHome}
 	if len(s.MCPServers) > 0 {
 		t.MCP = map[string]worker.MCPServer{}
 		for name, m := range s.MCPServers {
@@ -384,6 +387,16 @@ func parseTools(s *Settings, emoji map[task.Action][]string) error {
 			return errors.New("config: agent.mode fix needs agent.tools.write: the changes the agent may make")
 		case s.Approver == "" && !s.AllowUnapprovedWrites:
 			return errors.New("config: fix mode without approver lets anyone in the channel trigger write entries: set agent.approver, or agent.allow_unapproved_writes: true")
+		case s.AllowRealHome && s.Approver == "":
+			return errors.New("config: agent.allow_real_home needs agent.approver: with the real HOME, a write that changes files there (the shell rc file, the kubeconfig) reaches every later session, and only the approver sees each write")
+		}
+		// The fresh HOME guards the shell rc file, which the CLI sources before
+		// every Bash command, and the kubeconfig, whose exec plugins every
+		// kubectl call runs: one write to either reaches every later session.
+		for _, e := range s.WriteEntries {
+			if s.AllowRealHome && e.WritesHome() {
+				return fmt.Errorf("config: agent.allow_real_home: write entry %s can change files under HOME, which every later session would run with: narrow it, or keep the fresh HOME", e)
+			}
 		}
 	}
 	if s.Approver != "" {

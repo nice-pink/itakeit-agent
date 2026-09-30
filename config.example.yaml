@@ -66,6 +66,11 @@ agent:
   # with an approver, run only after that user's reaction.
   # mode: propose
   # approver: U0123456789
+  # Fix mode gives each session a fresh, empty HOME. true keeps the agent's
+  # HOME, so tools find ~/.kube and ~/.config/gcloud. Needs an approver, and
+  # is refused for write entries known to change files under HOME (README
+  # "Tools").
+  # allow_real_home: false
   # tools:
   #   read:
   #     - Read

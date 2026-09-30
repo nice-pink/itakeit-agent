@@ -157,6 +157,13 @@ func TestConfigFixMode(t *testing.T) {
 	if _, err := Parse([]byte(base + fix + "  allow_unapproved_writes: true\n")); err != nil {
 		t.Fatalf("fix without approver, allowed: %v", err)
 	}
+	if c, err := Parse([]byte(base + fix + "  approver: UAPP\n  allow_real_home: true\n")); err != nil || !c.Agent.WorkerTools().RealHome {
+		t.Fatalf("allow_real_home: err = %v", err)
+	}
+	// Propose mode never runs write entries, so they do not count against it.
+	if _, err := Parse([]byte(base + "  allow_real_home: true\n  approver: UAPP\n  tools:\n    read: [Read]\n    write: [\"Bash(kubectl config *)\"]\n")); err != nil {
+		t.Fatalf("allow_real_home in propose mode: %v", err)
+	}
 	for bad, want := range map[string]string{
 		fix:                               "allow_unapproved_writes",
 		"  mode: fix\n  approver: UAPP\n": "needs agent.tools.write",
@@ -168,11 +175,21 @@ func TestConfigFixMode(t *testing.T) {
 		"  mode: fix\n  approver: UAPP\n  tools:\n    read: [\"Bash(kubectl get *)\"]\n    write: [Bash]\n":                                                     "also covers write entry",
 		"  mode: fix\n  allow_unapproved_writes: true\n  tools:\n    write: [Bash]\n":                                                                           "needs agent.approver",
 		"  mode: fix\n  allow_unapproved_writes: true\n  tools:\n    write: [\"Bash(sed -i *)\"]\n":                                                             "needs agent.approver",
+		"  mode: fix\n  approver: UAPP\n  allow_real_home: true\n  tools:\n    write: [Bash]\n":                                                                 "allow_real_home",
+		"  mode: fix\n  approver: UAPP\n  allow_real_home: true\n  tools:\n    write: [\"Bash(tee *)\"]\n":                                                      "allow_real_home",
+		"  mode: fix\n  approver: UAPP\n  allow_real_home: true\n  tools:\n    write: [\"Bash(kubectl config *)\"]\n":                                           "change files under HOME",
+		"  mode: fix\n  approver: UAPP\n  allow_real_home: true\n  tools:\n    write: [\"Bash(kubectl cp *)\"]\n":                                               "change files under HOME",
+		"  mode: fix\n  approver: UAPP\n  allow_real_home: true\n  tools:\n    write: [\"Bash(helm repo add *)\"]\n":                                            "change files under HOME",
+		"  mode: fix\n  approver: UAPP\n  allow_real_home: true\n  tools:\n    write: [\"Bash(gcloud container clusters get-credentials *)\"]\n":                "change files under HOME",
+		"  mode: fix\n  approver: UAPP\n  allow_real_home: true\n  tools:\n    write: [\"Bash(gcloud container *)\"]\n":                                         "change files under HOME",
+		"  mode: fix\n  approver: UAPP\n  allow_real_home: true\n  tools:\n    write: [\"Bash(aws eks update-kubeconfig *)\"]\n":                                "change files under HOME",
+		"  mode: fix\n  approver: UAPP\n  allow_real_home: true\n  tools:\n    write: [\"Bash(kubectl *)\"]\n":                                                  "change files under HOME",
+		"  mode: fix\n  allow_unapproved_writes: true\n  allow_real_home: true\n  tools:\n    write: [\"Bash(kubectl rollout restart *)\"]\n":                   "needs agent.approver",
 		fix + "  approver: UAPP\n  approval_emoji:\n    approve: white_check_mark\n":                                                                            "itakeit's done emoji",
 		fix + "  approver: UAPP\n  approval_emoji:\n    approve: x\n":                                                                                           "must differ",
 		fix + "  approver: UAPP\n  approval_timeout_minutes: 41\n":                                                                                              "between 1 and 40",
 		fix + "  approver: UAPP\n  backend: api\n":                                                                                                              "backend claude-code",
-		"  approver: UAPP\n  backend: api\n":                                                                                                                    "backend claude-code",
+		"  approver: UAPP\n  backend: api\n": "backend claude-code",
 	} {
 		if _, err := Parse([]byte(base + bad)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: err = %v, want %q", bad, err, want)

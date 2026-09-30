@@ -157,6 +157,40 @@ func (e Entry) NeedsApprover() bool {
 	return strings.Contains(first, "=") || isRunner(first)
 }
 
+// homeWriters are subcommands that change files under HOME: the kubeconfig,
+// whose exec plugins every later kubectl call runs, CLI config, plugins and
+// repositories, and local copies. HACK: best effort like runners, matched on
+// leading words, so a flag before the subcommand (kubectl --context x config)
+// gets past it. The approver, who sees every write, is the guard that holds.
+var homeWriters = []string{"kubectl config", "kubectl cp", "kubectl krew", "kubectl plugin", "helm plugin", "helm repo",
+	"helm registry", "helm dependency", "gcloud config", "gcloud auth", "gcloud components",
+	"gcloud container clusters get-credentials", "aws configure", "aws eks update-kubeconfig", "az config", "az login",
+	"az aks get-credentials", "doctl kubernetes cluster kubeconfig", "docker login", "gh auth", "gh config", "git config"}
+
+// WritesHome reports a write entry that can change files under HOME, which a
+// later session with the real HOME would then run with: one that NeedsApprover,
+// one that names only a program (it reaches every subcommand), or one whose
+// words start a known writer's or are started by one (homeWriters):
+// Bash(gcloud container *) reaches get-credentials too.
+func (e Entry) WritesHome() bool {
+	if e.NeedsApprover() || e.Broad() {
+		return true
+	}
+	if e.Tool != "Bash" {
+		return false
+	}
+	f := strings.Fields(e.Prefix)
+	f[0] = filepath.Base(f[0])
+	for _, w := range homeWriters {
+		wf := strings.Fields(w)
+		n := min(len(f), len(wf))
+		if slices.Equal(f[:n], wf[:n]) {
+			return true
+		}
+	}
+	return false
+}
+
 func isRunner(cmd string) bool {
 	cmd = filepath.Base(cmd)
 	return slices.Contains(runners, cmd) || strings.HasPrefix(cmd, "python")
@@ -177,6 +211,10 @@ type Tools struct {
 	Approval    bool                 // writes wait for the approver (the prompt says so)
 	WorkTimeout time.Duration        // active time: approval waits do not count
 	MCP         map[string]MCPServer // by server name
+	// RealHome keeps the agent's HOME in fix mode, as propose mode does, so
+	// tools find their credentials under it (~/.kube, ~/.config/gcloud).
+	// Config allows it only with an approver and no write entry WritesHome.
+	RealHome bool
 }
 
 // MCPServer is one MCP server the CLI starts or connects to. Env and Headers

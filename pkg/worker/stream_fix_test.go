@@ -381,6 +381,31 @@ func TestStreamFixModeFreshHome(t *testing.T) {
 	}
 }
 
+// With RealHome a fix-mode session keeps the agent's HOME, as propose mode
+// does, and no kubeconfig is copied, but gets a fresh CLAUDE_CONFIG_DIR of its
+// own, removed after the round.
+func TestStreamFixModeRealHome(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/shared/config")
+	tools := fixTools(10 * time.Second)
+	tools.RealHome = true
+	w, _, _, _ := fakeStream(t, tools, "in", fixInit, resultLine)
+	t.Setenv("KUBECONFIG", "/nonexistent/kubeconfig") // a copy would fail on it
+	if _, err := w.Work(context.Background(), Task{ID: testTask, Transcript: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	read := func(ext string) string {
+		b, _ := os.ReadFile(os.Getenv("FAKE_ARGS") + ext)
+		return strings.TrimSpace(string(b))
+	}
+	ccd := read(".ccd")
+	if read(".home") != os.Getenv("HOME") || filepath.Base(filepath.Dir(ccd)) != "home" || read(".kc") != "/nonexistent/kubeconfig" {
+		t.Fatalf("HOME = %s, CLAUDE_CONFIG_DIR = %s, KUBECONFIG = %s", read(".home"), ccd, read(".kc"))
+	}
+	if _, err := os.Stat(ccd); !os.IsNotExist(err) {
+		t.Errorf("session config dir %s left behind", ccd)
+	}
+}
+
 // A fix-mode session gets a copy of the KUBECONFIG file in its fresh HOME,
 // since the CLI scrubs KUBECONFIG from the Bash tool's shell. The operator's
 // file is left alone, and a list of files is refused.

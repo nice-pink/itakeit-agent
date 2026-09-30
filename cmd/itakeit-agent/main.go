@@ -126,6 +126,12 @@ func newWorker(ctx context.Context, s agent.Settings, dir string, mem *worker.Me
 			if s.Approver != "" && s.AllowUnapprovedWrites {
 				slog.Warn("agent.allow_unapproved_writes has no effect with an approver: every write needs the approval")
 			}
+			switch {
+			case s.AllowRealHome && t.Mode == worker.ModeFix:
+				slog.Warn("agent.allow_real_home: fix-mode sessions share the agent's HOME, so what one session writes there reaches the next")
+			case s.AllowRealHome:
+				slog.Warn("agent.allow_real_home has no effect in propose mode, which always keeps the real HOME")
+			}
 			for _, e := range t.Read {
 				if e.Broad() {
 					slog.Warn("a read entry names a whole program, which reaches all of its subcommands: name the subcommand", "entry", e.String())

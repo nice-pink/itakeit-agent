@@ -340,6 +340,8 @@ func (c *cli) ask(ctx context.Context, system, user, effort string, _ int64, des
 // A HOME per session lets nothing a session writes outside its cwd reach the
 // next one. It needs a login that does not live in HOME (the startup check in
 // cmd/itakeit-agent). Propose mode cannot write, so it keeps the real HOME.
+// Fix mode with Tools.RealHome keeps it too but still gets a fresh config
+// directory (isolate).
 func (c *cli) act(ctx context.Context, system, user, effort, cwd string, approve Approve, dest any) (streamResult, error) {
 	s, err := c.stream(system, user, effort, cwd, c.tools.exposed(), c.tools.argv(c.mcpPath(), c.unlistedNow()), c.tools.WorkTimeout, dest)
 	if err != nil {
@@ -351,7 +353,7 @@ func (c *cli) act(ctx context.Context, system, user, effort, cwd string, approve
 			return streamResult{}, err
 		}
 		defer os.RemoveAll(home)
-		if s.env, err = freshHome(s.env, home); err != nil {
+		if s.env, err = c.isolate(s.env, home); err != nil {
 			return streamResult{}, err
 		}
 	}
@@ -360,6 +362,19 @@ func (c *cli) act(ctx context.Context, system, user, effort, cwd string, approve
 	sr, err := s.run(ctx, dest)
 	c.noteUnlisted(sr.initTools)
 	return sr, err
+}
+
+// isolate gives a fix-mode session the fresh directory dir: as its HOME, or
+// with Tools.RealHome as its CLAUDE_CONFIG_DIR only, so the CLI's shell
+// snapshots and .claude.json are still not shared between sessions. The shell
+// rc file then stays the real one, which is why config requires an approver
+// and refuses write entries known to change files under HOME.
+func (c *cli) isolate(env []string, dir string) ([]string, error) {
+	if !c.tools.RealHome {
+		return freshHome(env, dir)
+	}
+	out := slices.DeleteFunc(slices.Clone(env), func(kv string) bool { return strings.HasPrefix(kv, "CLAUDE_CONFIG_DIR=") })
+	return append(out, "CLAUDE_CONFIG_DIR="+dir), nil
 }
 
 // freshHome points HOME at home and drops CLAUDE_CONFIG_DIR, which would
@@ -451,8 +466,9 @@ const probeToolsPrompt = `You are being checked at startup by the program that r
 // tool call would be denied silently, with nothing in the logs saying why. The
 // model may answer without calling the tool, so one retry is allowed.
 //
-// In fix mode it runs with a fresh HOME, as every fix-mode session does, so a
-// login that lives in HOME fails here rather than on the first task.
+// In fix mode it runs isolated as every fix-mode session does (isolate), so a
+// login that lives in HOME or the config directory fails here rather than on
+// the first task.
 func (c *cli) probeTools(ctx context.Context) error {
 	cwd := filepath.Join(c.dir, "probe")
 	if err := os.MkdirAll(cwd, 0o700); err != nil {
@@ -489,7 +505,7 @@ func (c *cli) probeTools(ctx context.Context) error {
 			return err
 		}
 		if home != "" {
-			if s.env, err = freshHome(s.env, home); err != nil {
+			if s.env, err = c.isolate(s.env, home); err != nil {
 				return err
 			}
 		}
@@ -511,7 +527,7 @@ func (c *cli) probeTools(ctx context.Context) error {
 		return fmt.Errorf("tools probe: %w: the agent needs each server's tool list to disallow the unlisted ones", mcpErr)
 	}
 	if home != "" {
-		return fmt.Errorf("tools probe with an empty HOME failed (%v): fix mode runs every tool session with a fresh HOME, so the login cannot live there; set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`", lastErr)
+		return fmt.Errorf("tools probe with a fresh HOME and config directory failed (%v): fix mode runs every tool session with them (with allow_real_home the config directory only), so a `claude auth login` login is not found; set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`", lastErr)
 	}
 	if lastErr != nil {
 		return fmt.Errorf("tools probe: no permission request reached the agent (%w): check the claude CLI version", lastErr)
