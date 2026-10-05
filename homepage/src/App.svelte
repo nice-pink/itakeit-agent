@@ -23,6 +23,9 @@
     ['Writes', 'never', 'never: write tools are not even shown', 'posted first; with an approver, run only after their ✔️'],
   ]
 
+  let backend = $state<'claude-code' | 'langdock'>('claude-code')
+  const langdock = $derived(backend === 'langdock')
+
   const config = `# itakeit's config.yaml, plus:
 agent:
   itakeit_app: A0123456789   # itakeit's App ID (api.slack.com/apps)
@@ -36,6 +39,15 @@ agent:
   const run = `docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" ghcr.io/nice-pink/itakeit-agent:latest`
 
   const build = `git clone https://github.com/nice-pink/itakeit-agent.git && docker build -t itakeit-agent itakeit-agent`
+
+  const langdockConfig = `agent:
+  backend: langdock
+  model: claude-sonnet-4-5     # a model ID from your Langdock workspace
+  langdock_region: eu          # eu (default) or us`
+
+  const langdockRun = `docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e LANGDOCK_API_KEY -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" ghcr.io/nice-pink/itakeit-agent-langdock:latest`
+
+  const langdockBuild = `git clone https://github.com/nice-pink/itakeit-agent.git && docker build -f itakeit-agent/Dockerfile.langdock -t itakeit-agent-langdock itakeit-agent`
 
   const tools = `agent:
   mode: fix                    # or propose: investigate and propose only
@@ -144,7 +156,12 @@ agent:
 
   <section id="setup" class="wrap setup">
     <h2>Setup</h2>
-    <p class="sub">About fifteen minutes. You need a channel running <a href={itakeit}>itakeit</a>, a Claude login, and a machine that runs Docker.</p>
+    <div class="picker" role="radiogroup" aria-label="Model backend">
+      <span>Backend</span>
+      <label class:on={!langdock}><input type="radio" name="backend" value="claude-code" bind:group={backend} />claude-code</label>
+      <label class:on={langdock}><input type="radio" name="backend" value="langdock" bind:group={backend} />langdock</label>
+    </div>
+    <p class="sub">About fifteen minutes. You need a channel running <a href={itakeit}>itakeit</a>, {#if langdock}a Langdock API key{:else}a Claude login{/if}, and a machine that runs Docker.</p>
 
     <ol class="steps">
       <li>
@@ -168,18 +185,35 @@ agent:
         <h3>Add the agent block to config.yaml</h3>
         <p>Start from itakeit's own <code>config.yaml</code>, so both apps agree on the channels and the emoji, and add an <code>agent</code> block. itakeit ignores it, so both can mount the same file. <code>skills</code> is what the agent takes; <code>knowledge</code> files are optional. Every other setting is in <a href="{repo}/blob/main/config.example.yaml">config.example.yaml</a>.</p>
         <Code code={config} label="config.yaml" />
+        {#if langdock}
+          <p>Add the backend keys to the same block. Langdock has no tools, so leave out <code>tools</code> and <code>mcp_servers</code>, and keep the default mode.</p>
+          <Code code={langdockConfig} label="config.yaml" />
+        {/if}
       </li>
       <li>
-        <h3>Log in to Claude</h3>
-        <p>On any machine with Claude Code, run <code>claude setup-token</code> once and keep the token as <code>CLAUDE_CODE_OAUTH_TOKEN</code>. Usage counts against that Claude plan. To bill the API instead, set <code>backend: api</code> and pass <code>-e ANTHROPIC_API_KEY</code> in place of the token; tools need the default <code>claude-code</code> backend.</p>
+        {#if langdock}
+          <h3>Get a Langdock API key</h3>
+          <p>Create an API key in your Langdock workspace and keep it as <code>LANGDOCK_API_KEY</code>. Set <code>model</code> to a model ID from the workspace, and <code>langdock_region</code> to <code>eu</code> or <code>us</code> to match it. The agent calls Langdock’s OpenAI-compatible API, so any model of the workspace works.</p>
+        {:else}
+          <h3>Log in to Claude</h3>
+          <p>On any machine with Claude Code, run <code>claude setup-token</code> once and keep the token as <code>CLAUDE_CODE_OAUTH_TOKEN</code>. Usage counts against that Claude plan. To bill the API instead, set <code>backend: api</code> and pass <code>-e ANTHROPIC_API_KEY</code> in place of the token; tools need the default <code>claude-code</code> backend.</p>
+        {/if}
       </li>
       <li>
         <h3>Run the container</h3>
-        <p>Export the three tokens, then start the published image from the directory with <code>config.yaml</code> and your knowledge files. It is built for amd64 and arm64; <code>latest</code> follows <code>main</code>, and releases are tagged.</p>
-        <Code code={'export AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...'} label="shell" />
-        <Code code={run} label="shell" />
-        <p>Or build it yourself, and run <code>itakeit-agent</code> in place of the image name above:</p>
-        <Code code={build} label="shell" />
+        {#if langdock}
+          <p>Export the three tokens, then start the Langdock image from the directory with <code>config.yaml</code> and your knowledge files. It has no Claude Code CLI and no Node, and refuses <code>agent.tools</code>, <code>agent.mcp_servers</code> and mode <code>fix</code>. Memory needs the <code>-mem</code> image.</p>
+          <Code code={'export AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... LANGDOCK_API_KEY=...'} label="shell" />
+          <Code code={langdockRun} label="shell" />
+          <p>Or build it yourself, and run <code>itakeit-agent-langdock</code> in place of the image name above:</p>
+          <Code code={langdockBuild} label="shell" />
+        {:else}
+          <p>Export the three tokens, then start the published image from the directory with <code>config.yaml</code> and your knowledge files. It is built for amd64 and arm64; <code>latest</code> follows <code>main</code>, and releases are tagged.</p>
+          <Code code={'export AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...'} label="shell" />
+          <Code code={run} label="shell" />
+          <p>Or build it yourself, and run <code>itakeit-agent</code> in place of the image name above:</p>
+          <Code code={build} label="shell" />
+        {/if}
         <p>To run itakeit next to it, the repository has Docker Compose files for both: <code>docker-compose-remote.yml</code> with the published images, <code>docker-compose-local.yml</code> built from source.</p>
       </li>
       <li>
@@ -300,6 +334,12 @@ agent:
   .steps > li::before { content: counter(step); position: absolute; left: -1.25rem; top: -0.2rem; width: 2.5rem; height: 2.5rem; display: grid; place-items: center; font: 700 1.1rem var(--mono); background: var(--green); color: #fff; border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
   .steps h3 { margin: 0 0 0.4rem; font-size: 1.2rem; }
   .steps p { margin: 0 0 0.6rem; }
+  .picker { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.8rem; }
+  .picker span { font-weight: 600; margin-right: 0.3rem; }
+  .picker label { cursor: pointer; font: 600 0.9rem var(--mono); padding: 0.3rem 0.8rem; background: var(--panel); border: 2px solid var(--ink); }
+  .picker label.on { background: var(--green); color: #fff; box-shadow: 3px 3px 0 var(--ink); }
+  .picker input { position: absolute; opacity: 0; pointer-events: none; }
+  .picker label:has(input:focus-visible) { outline: 3px solid var(--orange); outline-offset: 2px; }
   details { margin: 0.4rem 0 0.8rem; }
   summary { cursor: pointer; font-weight: 600; color: var(--green-dark); }
   .note { max-width: 820px; background: #fff3e6; border: 2px solid var(--ink); border-left: 8px solid var(--orange); padding: 1rem 1.2rem; }
