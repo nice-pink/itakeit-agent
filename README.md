@@ -86,6 +86,8 @@ With `agent.memory`, run `ghcr.io/nice-pink/itakeit-agent-mem` (same tags as `gh
 docker build -f Dockerfile.mem -t itakeit-agent-mem . && docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v itakeit-memory:/config/memory itakeit-agent-mem
 ```
 
+With `backend: langdock`, run `ghcr.io/nice-pink/itakeit-agent-langdock` (same tags), or build `Dockerfile.langdock`. It has no Claude Code CLI and no Node, and refuses `agent.tools`, `agent.mcp_servers` and mode fix, as the config check does for the langdock backend. It has no poma-memory either, so `agent.memory` needs the `-mem` image. Pass `LANGDOCK_API_KEY` instead of `CLAUDE_CODE_OAUTH_TOKEN`.
+
 ## Knowledge
 
 Knowledge files are this agent's equivalent of a CLAUDE.md, except nothing is picked up automatically: only the files listed under `agent.knowledge` reach it. The machine's CLAUDE.md files, user and project settings and hooks never do. Managed (policy) settings still apply.

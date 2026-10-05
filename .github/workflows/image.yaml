@@ -20,7 +20,8 @@ concurrency:
 
 jobs:
   image:
-    # itakeit-agent, and itakeit-agent-mem with poma-memory for agent.memory.
+    # itakeit-agent, itakeit-agent-mem with poma-memory for agent.memory, and
+    # itakeit-agent-langdock for backend langdock.
     strategy:
       fail-fast: false
       matrix:
@@ -29,6 +30,8 @@ jobs:
             suffix: ''
           - dockerfile: Dockerfile.mem
             suffix: -mem
+          - dockerfile: Dockerfile.langdock
+            suffix: -langdock
     runs-on: ubuntu-latest
     # The mem image installs poma-memory and its model under QEMU for arm64 too.
     timeout-minutes: ${{ matrix.suffix == '' && 30 || 60 }}
