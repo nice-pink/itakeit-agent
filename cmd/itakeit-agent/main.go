@@ -107,9 +107,16 @@ func run(cfgPath string, debug bool) error {
 // everything posted in case a tool finds them.
 func newWorker(ctx context.Context, s agent.Settings, dir string, mem *worker.Memory, secret ...string) (worker.Worker, error) {
 	var w *worker.Claude
-	if s.Backend == agent.BackendAPI {
+	switch s.Backend {
+	case agent.BackendAPI:
 		w = worker.NewAPI(s.Model, s.Skills)
-	} else {
+	case agent.BackendLangdock:
+		key := os.Getenv("LANGDOCK_API_KEY")
+		if key == "" {
+			return nil, errors.New("agent.backend langdock needs LANGDOCK_API_KEY")
+		}
+		w = worker.NewLangdock(s.LangdockRegion, s.Model, key, s.Skills)
+	default:
 		email, err := claudeLogin(ctx, s.ClaudeBin, s.Env)
 		if err != nil {
 			return nil, err

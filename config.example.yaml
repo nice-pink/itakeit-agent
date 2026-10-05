@@ -40,9 +40,12 @@ agent:
   #   that Claude plan.
   # api: the Messages API, with ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or an
   #   `ant auth login` profile. Billed to the Console organization.
+  # langdock: Langdock's OpenAI-compatible API with LANGDOCK_API_KEY, any model of the
+  #   workspace (model is then required) in langdock_region eu (default) or us. No tools.
   backend: claude-code
+  # langdock_region: eu
 
-  # The Claude Code CLI to run, for backend claude-code.
+  # The Claude Code CLI to run. Only backend claude-code reads it; api and langdock ignore it.
   claude_bin: claude
 
   # Model for triage and work. Default opus for claude-code (a CLI alias) and

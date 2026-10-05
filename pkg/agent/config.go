@@ -35,6 +35,7 @@ type Settings struct {
 	ItakeitApp        string `yaml:"itakeit_app"`
 	Backend           string `yaml:"backend"`
 	ClaudeBin         string `yaml:"claude_bin"`
+	LangdockRegion    string `yaml:"langdock_region"`
 	Model             string `yaml:"model"`
 	Skills            string `yaml:"skills"`
 	ClaimDelaySeconds int    `yaml:"claim_delay_seconds"`
@@ -130,6 +131,7 @@ const maxKnowledge = 256 << 10
 const (
 	BackendClaudeCode = "claude-code" // the Claude Code CLI and its login
 	BackendAPI        = "api"         // the Messages API with API credentials
+	BackendLangdock   = "langdock"    // Langdock's OpenAI-compatible API with LANGDOCK_API_KEY
 )
 
 func Load(path string) (*Config, error) {
@@ -217,8 +219,16 @@ func Parse(raw []byte) (*Config, error) {
 		s.ClaudeBin = cmp.Or(s.ClaudeBin, "claude")
 	case BackendAPI:
 		s.Model = cmp.Or(s.Model, "claude-opus-5")
+	case BackendLangdock:
+		if s.Model == "" {
+			return nil, errors.New("config: agent.model is required for backend langdock: use a model ID from GET /openai/{region}/v1/models")
+		}
+		s.LangdockRegion = cmp.Or(s.LangdockRegion, "eu")
+		if s.LangdockRegion != "eu" && s.LangdockRegion != "us" {
+			return nil, fmt.Errorf("config: agent.langdock_region must be eu or us, got %q", s.LangdockRegion)
+		}
 	default:
-		return nil, fmt.Errorf("config: agent.backend must be %q or %q, got %q", BackendClaudeCode, BackendAPI, s.Backend)
+		return nil, fmt.Errorf("config: agent.backend must be %q, %q or %q, got %q", BackendClaudeCode, BackendAPI, BackendLangdock, s.Backend)
 	}
 	if s.ClaimDelaySeconds < 0 || s.MaxParallel < 0 || s.RecoverMessages < 0 {
 		return nil, errors.New("config: agent.claim_delay_seconds, max_parallel and recover_messages must be positive")
@@ -229,7 +239,7 @@ func Parse(raw []byte) (*Config, error) {
 		}
 		// Compared in upper case: names are case-sensitive on Linux and macOS, but
 		// Windows folds them.
-		if up := strings.ToUpper(name); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" {
+		if up := strings.ToUpper(name); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" || up == "LANGDOCK_API_KEY" {
 			return nil, fmt.Errorf("config: agent.env must not pass %s to the claude CLI", name)
 		}
 	}
@@ -319,7 +329,7 @@ func checkMCP(s *Settings) error {
 			if !envName.MatchString(v) {
 				return fmt.Errorf("config: agent.mcp_servers.%s: %q is not a variable name", name, v)
 			}
-			if up := strings.ToUpper(v); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" {
+			if up := strings.ToUpper(v); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" || up == "LANGDOCK_API_KEY" {
 				return fmt.Errorf("config: agent.mcp_servers.%s must not pass %s", name, v)
 			}
 			// A variable the CLI gets anyway (agent.env, CLAUDE_CODE_*, proxies ...)

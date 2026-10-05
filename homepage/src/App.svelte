@@ -81,6 +81,10 @@ agent:
 <header class="nav">
   <div class="wrap row">
     <a class="brand" href="#top"><img src="./turtle-parrot.png" alt="" /> itakeit-agent</a>
+    <ul class="backends" aria-label="Supported backends">
+      <li class="badge">claude-code</li>
+      <li class="badge">langdock</li>
+    </ul>
     <nav>
       <a href="#how">How it works</a>
       <a href="#setup">Setup</a>
@@ -253,6 +257,9 @@ agent:
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
   .small { font-size: 0.85rem; color: var(--muted); }
+  .nav nav { margin-left: auto; }
+  .backends { display: flex; gap: 0.4rem; align-items: center; list-style: none; margin: 0; padding: 0; font-size: 0.85rem; color: var(--muted); }
+  .badge { font-family: var(--mono); color: var(--green-dark); background: var(--green-soft); border: 1px solid var(--green); border-radius: 999px; padding: 0.1rem 0.7rem; }
   .center { text-align: center; }
 
   .nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 2px solid var(--ink); }
@@ -323,9 +330,14 @@ agent:
   }
   .scroll-hint { display: none; margin: 0 0 0.4rem; font-size: 0.8rem; color: var(--muted); }
   @media (max-width: 520px) {
+    .nav .row { gap: 0.3rem 0.4rem; padding-bottom: 0.4rem; }
+    .nav .row .brand { order: 1; font-size: 0.9rem; gap: 0.35rem; }
+    .backends { order: 2; gap: 0.25rem; }
+    .badge { font-size: 0.66rem; padding: 0.03rem 0.4rem; }
+    .nav nav { order: 3; flex: 1 0 100%; margin-left: 0; gap: 0.5rem; flex-wrap: nowrap; justify-content: space-between; overflow-x: auto; }
+    .nav nav a { font-size: 0.8rem; white-space: nowrap; }
     .scroll-hint { display: block; }
     td:first-child { white-space: normal; }
-    nav a:not(:last-child):not([href="#setup"]) { display: none; }
     .steps > li { padding-left: 2.2rem; margin-left: 1.2rem; }
     .grid { grid-template-columns: minmax(0, 1fr); }
   }

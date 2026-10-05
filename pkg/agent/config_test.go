@@ -54,6 +54,14 @@ func TestConfigBackendDefaults(t *testing.T) {
 	if err != nil || c.Agent.Model != "claude-opus-5" {
 		t.Fatalf("api: %+v, %v", c.Agent, err)
 	}
+	for yaml, want := range map[string]string{"  backend: langdock\n": "model is required", "  backend: langdock\n  model: m\n  langdock_region: asia\n": "langdock_region", "  backend: langdock\n  model: m\n  tools:\n    read: [Read]\n": "backend claude-code"} {
+		if _, err := Parse([]byte(base + yaml)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%q: got %v, want %q", yaml, err, want)
+		}
+	}
+	if c, err = Parse([]byte(base + "  backend: langdock\n  model: m\n")); err != nil || c.Agent.LangdockRegion != "eu" {
+		t.Fatalf("langdock defaults: %+v, %v", c, err)
+	}
 	if _, err := Parse([]byte(base + "  backend: gpt\n")); err == nil {
 		t.Fatal("accepted an unknown backend")
 	}

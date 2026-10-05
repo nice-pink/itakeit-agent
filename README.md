@@ -36,6 +36,7 @@ You need a Slack channel running [itakeit](https://github.com/nice-pink/itakeit)
 4. Log in to Claude:
    - `backend: claude-code` (default): install Claude Code and run `claude auth login` as the user the agent runs as. For a container or a server without a browser, run `claude setup-token` once on your machine and pass the token as `CLAUDE_CODE_OAUTH_TOKEN`. At startup the agent runs `claude auth status` and a probe call, and refuses to start without a working login.
    - `backend: api`: set `ANTHROPIC_API_KEY`, or log in with `ant auth login`.
+   - `backend: langdock`: set `LANGDOCK_API_KEY`, `model` to a model ID of the workspace, and `langdock_region` to `eu` (default) or `us`. Like `api` it has no tools. 
 5. Start it, as in Run below.
 6. Check it. The log shows `authenticated` and then `connected to slack`; a setup problem stops the agent at startup with an error that names the fix (channel, login, config). Then post a task the `skills` cover: after `claim_delay_seconds` the agent reacts 🙋 and answers in the thread.
 
