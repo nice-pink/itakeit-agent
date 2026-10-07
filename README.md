@@ -233,3 +233,7 @@ With `backend: claude-code`, each call is one `claude -p` run. The thread goes i
 The CLI adds an environment block to the prompt that the agent cannot turn off: the login's email, the working directory and the OS. The prompts tell the model not to reveal it, and verbatim copies of the email are removed from every reply, triage reason and error before posting. The agent learns the email from `claude auth status` and from the startup probe above, which asks the model what email its prompt carries. That is the only source for a `CLAUDE_CODE_OAUTH_TOKEN` login, so if the model declines to say, nothing is removed and the agent logs a warning at startup. This is best effort: a task can still talk the model into posting the email in pieces (a review got `"rh"`, `"@"` and the domain as separate strings), or into posting the OS or the temp directory path. Use a login whose email you are fine exposing to the channel.
 
 With `backend: api`, requests stream from the Messages API with adaptive thinking. Server-side refusal fallbacks are on (`fallbacks: "default"`), so a request the model declines on policy grounds is retried on another model inside the same call. A work round that is still refused ends the task as ⛔ blocked. A refused triage leaves the task alone. Triage and work without tools share `max_parallel` with either backend; tool rounds use `max_sessions`.
+
+## License
+
+GPL-3.0, see [LICENSE](LICENSE).

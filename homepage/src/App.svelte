@@ -111,7 +111,10 @@ agent:
 <main id="top">
   <section class="hero wrap">
     <div class="pitch">
-      <img class="turtle" src="./turtle-parrot.png" alt="pixel parrot riding the itakeit turtle" width="400" height="340" />
+      <div class="says">
+        <img class="turtle" src="./turtle-parrot.png" alt="pixel parrot riding the itakeit turtle" width="400" height="340" />
+        <img class="bubble" src="./getdone.png" alt="Just want to get it done." width="1536" height="1024" />
+      </div>
       <h1>A teammate in your Slack task channel. <span>It takes what it can do.</span></h1>
       <p class="lead"><b>itakeit-agent</b> watches the Slack channels your <a href={itakeit}>itakeit</a> bot tracks and claims the tasks its skills cover. It works them in the thread the way a person does, with <Emojify text="🙋" />, a reply and a status, on Claude. Give it tools and it investigates; allow changes and it makes them, with an approver only after they say so.</p>
       <div class="cta">
@@ -305,7 +308,9 @@ agent:
   nav a:hover { color: var(--green); }
 
   .hero { display: grid; grid-template-columns: 1fr 1.05fr; gap: 3rem; align-items: center; padding-top: 3rem; padding-bottom: 4rem; }
-  .turtle { width: 170px; height: auto; image-rendering: pixelated; margin: 0 0 1rem -8px; }
+  .says { display: flex; align-items: flex-end; margin: 0 0 1rem; }
+  .turtle { width: 170px; height: auto; image-rendering: pixelated; margin: 0 0 0 -8px; flex: none; }
+  .bubble { width: 300px; max-width: 55%; height: auto; image-rendering: pixelated; margin: 0 0 1.5rem -1.5rem; }
   h1 { font: 800 clamp(2.2rem, 5vw, 3.5rem)/1.05 var(--sans); letter-spacing: -0.03em; margin: 0 0 1rem; }
   h1 span { color: var(--green); display: block; }
   .lead { font-size: 1.15rem; color: var(--muted); margin: 0 0 1.5rem; max-width: 34rem; }
@@ -365,6 +370,7 @@ agent:
     .hero, .split { grid-template-columns: 1fr; gap: 2rem; }
     .hero { padding-top: 1.5rem; }
     .turtle { width: 120px; }
+    .bubble { width: 230px; margin-left: -0.5rem; }
     nav { gap: 0.8rem; }
     nav a { font-size: 0.85rem; }
   }
