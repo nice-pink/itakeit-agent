@@ -1,8 +1,8 @@
 # itakeit-agent
 
-> itakeit-agent is a free, self-hosted Claude agent for itakeit's Slack channels. It claims the tasks its configured skills cover and works them in the task thread the way a person does: it reacts 🙋 to claim, says what it will do, replies with the result, and sets ✅ done, ❓ needs info or ⛔ blocked.
+> itakeit-agent is a free, self-hosted AI agent for itakeit's Slack channels. It claims the tasks its configured skills cover and works them in the task thread the way a person does: it reacts 🙋 to claim, says what it will do, replies with the result, and sets ✅ done, ❓ needs info or ⛔ blocked.
 
-It runs as one Docker container on Claude, through the Claude Code CLI and its login or through the Messages API with an API key. It connects to Slack over Socket Mode, so it needs no public URL, and it keeps no database: its state is its own reactions in the channel. It never talks to itakeit directly; itakeit sees it as one more user, so every itakeit rule applies to it unchanged.
+It runs as one Docker container. The model is Claude, through the Claude Code CLI and its login or through the Messages API with an API key, or any model behind an OpenAI-compatible chat completions API: OpenAI, Langdock, or a self-hosted server such as vLLM, SGLang, Ollama or llama.cpp running Qwen, Llama or Mistral (backend: openai with openai_base_url). It connects to Slack over Socket Mode, so it needs no public URL, and it keeps no database: its state is its own reactions in the channel. It never talks to itakeit directly; itakeit sees it as one more user, so every itakeit rule applies to it unchanged.
 
 ## How it works
 
@@ -13,7 +13,7 @@ It runs as one Docker container on Claude, through the Claude Code CLI and its l
 - Propose mode: it investigates with read-only tools the operator lists (Bash command patterns such as kubectl get, file tools confined to a per-task directory, MCP tools) and proposes the change for a human to apply.
 - Fix mode: it also runs write entries. Each write is posted in the thread before it runs; with an approver set, it runs only after that Slack user reacts ✔️ on the approval message.
 - Every tool call goes to the agent for a decision; the Claude CLI runs nothing on its own. The CLI gets an allow-listed environment without the Slack tokens, and known secret values are scrubbed from replies, best effort. Anything a read entry can read can end up quoted in the channel.
-- Fix mode without an approver requires allow_unapproved_writes: true. Tools require the claude-code backend. The image carries only the Claude CLI; the repository's examples add kubectl (examples/kubectl), gcloud for GKE (examples/gcloud), or run the agent in Kubernetes with its ServiceAccount (examples/in-cluster).
+- Fix mode without an approver requires allow_unapproved_writes: true. Tools require the claude-code backend; the api, langdock and openai backends have none. The image carries only the Claude CLI; the repository's examples add kubectl (examples/kubectl), gcloud for GKE (examples/gcloud), or run the agent in Kubernetes with its ServiceAccount (examples/in-cluster).
 - Fix mode gives every tool session a fresh home directory and copies the kubeconfig named in KUBECONFIG into it; allow_real_home: true keeps the real one, with an approver. Read entries that can print or change credentials (Bash(kubectl *), kubectl config, gcloud auth and similar) are refused, and so is every tool call with a flag such as --insecure-skip-tls-verify or --kubeconfig.
 
 ## Memory (advanced, optional)
@@ -29,7 +29,7 @@ It runs as one Docker container on Claude, through the Claude Code CLI and its l
 1. Run itakeit in the channel (https://itakeit.nice.pink).
 2. Create a separate Slack app from the manifest in the repository (scopes: channels:history, groups:history, channels:read, groups:read, chat:write, reactions:read, reactions:write; events: message.channels, message.groups, reaction_added, member_joined_channel, member_left_channel, channel_left, group_left, channel_archive, group_archive, channel_unarchive, group_unarchive). Generate an app-level token with connections:write (AGENT_SLACK_APP_TOKEN) and install the app (AGENT_SLACK_BOT_TOKEN).
 3. Invite it to itakeit's channels and add an agent block (itakeit_app, the itakeit app's App ID; skills) to itakeit's config.yaml. The agent works in the same channels as itakeit, from that shared config: a channels list (or a single channel), or auto_channels: true for every channel the agent is a member of, so inviting it adds a channel and removing it stops it there.
-4. Run claude setup-token for CLAUDE_CODE_OAUTH_TOKEN, or use backend: api with ANTHROPIC_API_KEY.
+4. Run claude setup-token for CLAUDE_CODE_OAUTH_TOKEN, or use backend: api with ANTHROPIC_API_KEY, or backend: langdock with LANGDOCK_API_KEY, or backend: openai with OPENAI_API_KEY and a model that supports strict JSON schema output. For another model, such as Qwen on vLLM, SGLang or Ollama, set openai_base_url to the server's /v1 root and model to its name; the key is then optional.
 5. Run the published image ghcr.io/nice-pink/itakeit-agent (amd64 and arm64; latest follows main) with the tokens and the config mounted, or build it from the repository. Docker Compose files in the repository run it next to itakeit.
 6. Check the log for "connected to slack", then post a task the skills cover.
 
