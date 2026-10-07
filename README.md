@@ -37,6 +37,7 @@ You need a Slack channel running [itakeit](https://github.com/nice-pink/itakeit)
    - `backend: claude-code` (default): install Claude Code and run `claude auth login` as the user the agent runs as. For a container or a server without a browser, run `claude setup-token` once on your machine and pass the token as `CLAUDE_CODE_OAUTH_TOKEN`. At startup the agent runs `claude auth status` and a probe call, and refuses to start without a working login.
    - `backend: api`: set `ANTHROPIC_API_KEY`, or log in with `ant auth login`.
    - `backend: langdock`: set `LANGDOCK_API_KEY`, `model` to a model ID of the workspace, and `langdock_region` to `eu` (default) or `us`. Like `api` it has no tools. 
+   - `backend: openai`: set `OPENAI_API_KEY` and `model` to an OpenAI model ID. It calls the chat completions API with strict JSON schema output, so the model must support that. Set `openai_base_url` (default `https://api.openai.com/v1`) to use a compatible server such as vLLM, SGLang or Ollama with a self-hosted model like Qwen: `OPENAI_API_KEY` is then optional and no Authorization header is sent without it. A `<think>…</think>` block at the start of an answer is dropped, but vLLM serves Qwen3 cleanly only with `--reasoning-parser qwen3`. Like `api` it has no tools.
 5. Start it, as in Run below.
 6. Check it. The log shows `authenticated` and then `connected to slack`; a setup problem stops the agent at startup with an error that names the fix (channel, login, config). Then post a task the `skills` cover: after `claim_delay_seconds` the agent reacts 🙋 and answers in the thread.
 
@@ -86,7 +87,7 @@ With `agent.memory`, run `ghcr.io/nice-pink/itakeit-agent-mem` (same tags as `gh
 docker build -f Dockerfile.mem -t itakeit-agent-mem . && docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN -v "$PWD/config.yaml:/config/config.yaml:ro" -v itakeit-memory:/config/memory itakeit-agent-mem
 ```
 
-With `backend: langdock`, run `ghcr.io/nice-pink/itakeit-agent-langdock` (same tags), or build `Dockerfile.langdock`. It has no Claude Code CLI and no Node, and refuses `agent.tools`, `agent.mcp_servers` and mode fix, as the config check does for the langdock backend. It has no poma-memory either, so `agent.memory` needs the `-mem` image. Pass `LANGDOCK_API_KEY` instead of `CLAUDE_CODE_OAUTH_TOKEN`.
+With `backend: langdock` run `ghcr.io/nice-pink/itakeit-agent-langdock` (same tags), or build `Dockerfile.langdock`. With `backend: openai` run `ghcr.io/nice-pink/itakeit-agent-openai`, or build `Dockerfile.openai`. Both It has no Claude Code CLI and no Node, and refuses `agent.tools`, `agent.mcp_servers` and mode fix, as the config check does for these backends. It has no poma-memory either, so `agent.memory` needs the `-mem` image. Pass `LANGDOCK_API_KEY` or `OPENAI_API_KEY` instead of `CLAUDE_CODE_OAUTH_TOKEN`.
 
 ## Knowledge
 

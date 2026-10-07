@@ -36,6 +36,7 @@ type Settings struct {
 	Backend           string `yaml:"backend"`
 	ClaudeBin         string `yaml:"claude_bin"`
 	LangdockRegion    string `yaml:"langdock_region"`
+	OpenAIBaseURL     string `yaml:"openai_base_url"`
 	Model             string `yaml:"model"`
 	Skills            string `yaml:"skills"`
 	ClaimDelaySeconds int    `yaml:"claim_delay_seconds"`
@@ -127,11 +128,15 @@ func (s Settings) WorkerTools() *worker.Tools {
 // About 64K tokens.
 const maxKnowledge = 256 << 10
 
+// DefaultOpenAIBaseURL is where backend openai calls unless agent.openai_base_url says otherwise.
+const DefaultOpenAIBaseURL = "https://api.openai.com/v1"
+
 // Backends for the model calls.
 const (
 	BackendClaudeCode = "claude-code" // the Claude Code CLI and its login
 	BackendAPI        = "api"         // the Messages API with API credentials
 	BackendLangdock   = "langdock"    // Langdock's OpenAI-compatible API with LANGDOCK_API_KEY
+	BackendOpenAI     = "openai"      // OpenAI's chat completions API with OPENAI_API_KEY
 )
 
 func Load(path string) (*Config, error) {
@@ -227,8 +232,16 @@ func Parse(raw []byte) (*Config, error) {
 		if s.LangdockRegion != "eu" && s.LangdockRegion != "us" {
 			return nil, fmt.Errorf("config: agent.langdock_region must be eu or us, got %q", s.LangdockRegion)
 		}
+	case BackendOpenAI:
+		if s.Model == "" {
+			return nil, errors.New("config: agent.model is required for backend openai: use a model ID from GET /v1/models")
+		}
+		s.OpenAIBaseURL = cmp.Or(s.OpenAIBaseURL, DefaultOpenAIBaseURL)
+		if u, err := url.Parse(s.OpenAIBaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return nil, fmt.Errorf("config: agent.openai_base_url must be an http(s) URL such as %s, got %q", DefaultOpenAIBaseURL, s.OpenAIBaseURL)
+		}
 	default:
-		return nil, fmt.Errorf("config: agent.backend must be %q, %q or %q, got %q", BackendClaudeCode, BackendAPI, BackendLangdock, s.Backend)
+		return nil, fmt.Errorf("config: agent.backend must be %q, %q, %q or %q, got %q", BackendClaudeCode, BackendAPI, BackendLangdock, BackendOpenAI, s.Backend)
 	}
 	if s.ClaimDelaySeconds < 0 || s.MaxParallel < 0 || s.RecoverMessages < 0 {
 		return nil, errors.New("config: agent.claim_delay_seconds, max_parallel and recover_messages must be positive")
@@ -239,7 +252,7 @@ func Parse(raw []byte) (*Config, error) {
 		}
 		// Compared in upper case: names are case-sensitive on Linux and macOS, but
 		// Windows folds them.
-		if up := strings.ToUpper(name); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" || up == "LANGDOCK_API_KEY" {
+		if up := strings.ToUpper(name); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" || up == "LANGDOCK_API_KEY" || up == "OPENAI_API_KEY" {
 			return nil, fmt.Errorf("config: agent.env must not pass %s to the claude CLI", name)
 		}
 	}
@@ -329,7 +342,7 @@ func checkMCP(s *Settings) error {
 			if !envName.MatchString(v) {
 				return fmt.Errorf("config: agent.mcp_servers.%s: %q is not a variable name", name, v)
 			}
-			if up := strings.ToUpper(v); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" || up == "LANGDOCK_API_KEY" {
+			if up := strings.ToUpper(v); strings.HasPrefix(up, "AGENT_SLACK_") || up == "ANTHROPIC_API_KEY" || up == "ANTHROPIC_AUTH_TOKEN" || up == "LANGDOCK_API_KEY" || up == "OPENAI_API_KEY" {
 				return fmt.Errorf("config: agent.mcp_servers.%s must not pass %s", name, v)
 			}
 			// A variable the CLI gets anyway (agent.env, CLAUDE_CODE_*, proxies ...)

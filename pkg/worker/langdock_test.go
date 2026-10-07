@@ -25,7 +25,7 @@ func TestLangdockAsk(t *testing.T) {
 	var dest struct {
 		Email string `json:"email"`
 	}
-	ask := langdockAsk(srv.URL, "m1", "k1")
+	ask := chatAsk("langdock", srv.URL, "m1", "k1")
 	if err := ask(context.Background(), "sys", "usr", "high", 100, &dest); err != nil || dest.Email != "a@b.c" {
 		t.Fatalf("got %+v, %v", dest, err)
 	}
@@ -50,11 +50,32 @@ func TestLangdockAsk(t *testing.T) {
 		sse(`{"choices":[{"delta":{"content":"{"},"finish_reason":"length"}]}`):  "cut off",
 		sse(`{"choices":[{"delta":{"content":"nope"},"finish_reason":"stop"}]}`): "parse answer",
 		sse(`{"choices":[{"delta":{"content":"{}"}}]}`):                          "before the answer was complete",
-		sse(`{"error":{"message":"overloaded"}}`):                                "overloaded",
+		sse(`{"error":{"message":"overloaded"}}`):                                "langdock: {\"message\":\"overloaded\"}",
 	} {
 		reply = body
 		if err := ask(context.Background(), "s", "u", "low", 1, &dest); err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("%s: got %v, want %q", body, err, want)
 		}
+	}
+}
+
+func TestOpenAIBaseURLAndThink(t *testing.T) {
+	var gotPath string
+	var sawAuth bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, sawAuth = r.Header["Authorization"]
+		io.WriteString(w, `data: {"choices":[{"delta":{"content":"<think>\nmaybe {\"x\":0}\n</think>\n"}}]}`+"\n\n"+`data: {"choices":[{"delta":{"content":"{\"x\":1}"},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	var dest struct {
+		X int `json:"x"`
+	}
+	c := NewOpenAI(srv.URL+"/v1/", "qwen", "", "skills")
+	if err := c.ask(context.Background(), "s", "u", "low", 1, &dest); err != nil || dest.X != 1 {
+		t.Fatalf("got %+v, %v", dest, err)
+	}
+	if gotPath != "/v1/chat/completions" || sawAuth {
+		t.Fatalf("path %q, auth sent %v", gotPath, sawAuth)
 	}
 }

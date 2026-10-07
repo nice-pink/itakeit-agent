@@ -42,10 +42,14 @@ agent:
   #   `ant auth login` profile. Billed to the Console organization.
   # langdock: Langdock's OpenAI-compatible API with LANGDOCK_API_KEY, any model of the
   #   workspace (model is then required) in langdock_region eu (default) or us. No tools.
+  # openai: OpenAI's chat completions API with OPENAI_API_KEY and any model of the
+  #   account (model is then required). No tools. openai_base_url points it at a
+  #   compatible server (vLLM, SGLang, Ollama, e.g. Qwen); OPENAI_API_KEY is then optional.
   backend: claude-code
   # langdock_region: eu
+  # openai_base_url: https://api.openai.com/v1
 
-  # The Claude Code CLI to run. Only backend claude-code reads it; api and langdock ignore it.
+  # The Claude Code CLI to run. Only backend claude-code reads it; the other backends ignore it.
   claude_bin: claude
 
   # Model for triage and work. Default opus for claude-code (a CLI alias) and

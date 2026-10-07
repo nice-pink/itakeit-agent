@@ -54,13 +54,16 @@ func TestConfigBackendDefaults(t *testing.T) {
 	if err != nil || c.Agent.Model != "claude-opus-5" {
 		t.Fatalf("api: %+v, %v", c.Agent, err)
 	}
-	for yaml, want := range map[string]string{"  backend: langdock\n": "model is required", "  backend: langdock\n  model: m\n  langdock_region: asia\n": "langdock_region", "  backend: langdock\n  model: m\n  tools:\n    read: [Read]\n": "backend claude-code"} {
+	for yaml, want := range map[string]string{"  backend: langdock\n": "model is required", "  backend: openai\n": "model is required for backend openai", "  backend: openai\n  model: m\n  openai_base_url: localhost:8000\n": "openai_base_url", "  backend: openai\n  model: m\n  tools:\n    read: [Read]\n": "backend claude-code", "  backend: langdock\n  model: m\n  langdock_region: asia\n": "langdock_region", "  backend: langdock\n  model: m\n  tools:\n    read: [Read]\n": "backend claude-code"} {
 		if _, err := Parse([]byte(base + yaml)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("%q: got %v, want %q", yaml, err, want)
 		}
 	}
 	if c, err = Parse([]byte(base + "  backend: langdock\n  model: m\n")); err != nil || c.Agent.LangdockRegion != "eu" {
 		t.Fatalf("langdock defaults: %+v, %v", c, err)
+	}
+	if c, err = Parse([]byte(base + "  backend: openai\n  model: m\n")); err != nil || c.Agent.Backend != BackendOpenAI {
+		t.Fatalf("openai: %+v, %v", c.Agent, err)
 	}
 	if _, err := Parse([]byte(base + "  backend: gpt\n")); err == nil {
 		t.Fatal("accepted an unknown backend")

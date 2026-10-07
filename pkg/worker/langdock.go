@@ -6,7 +6,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,10 +20,20 @@ import (
 // gateway timeout for non-streaming calls. Effort and max tokens are not sent:
 // not every model behind the endpoint accepts them.
 func NewLangdock(region, model, apiKey, skills string) *Claude {
-	return &Claude{ask: langdockAsk(fmt.Sprintf("https://api.langdock.com/openai/%s/v1/chat/completions", region), model, apiKey), skills: skills}
+	return &Claude{ask: chatAsk("langdock", fmt.Sprintf("https://api.langdock.com/openai/%s/v1/chat/completions", region), model, apiKey), skills: skills}
 }
 
-func langdockAsk(url, model, apiKey string) askFunc {
+// NewOpenAI calls the chat completions endpoint under baseURL the same way
+// (OpenAI by default, or any compatible server such as vLLM, SGLang or Ollama).
+// Models that reject strict json_schema output fail the startup probe. An empty
+// apiKey sends no Authorization header, for servers without auth.
+func NewOpenAI(baseURL, model, apiKey, skills string) *Claude {
+	return &Claude{ask: chatAsk("openai", strings.TrimRight(baseURL, "/")+"/chat/completions", model, apiKey), skills: skills}
+}
+
+// chatAsk speaks the OpenAI chat completions protocol, which Langdock mirrors.
+// provider only names the backend in errors.
+func chatAsk(provider, url, model, apiKey string) askFunc {
 	client := &http.Client{Timeout: 15 * time.Minute}
 	return func(ctx context.Context, system, user, _ string, _ int64, dest any) error {
 		schema, err := schemaOf(dest)
@@ -50,7 +59,9 @@ func langdockAsk(url, model, apiKey string) askFunc {
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
@@ -59,7 +70,7 @@ func langdockAsk(url, model, apiKey string) askFunc {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-			return fmt.Errorf("langdock: %s: %s", resp.Status, bytes.TrimSpace(raw[:min(len(raw), 300)]))
+			return fmt.Errorf("%s: %s: %s", provider, resp.Status, bytes.TrimSpace(raw[:min(len(raw), 300)]))
 		}
 		var content strings.Builder
 		var refusal, finish string
@@ -84,10 +95,10 @@ func langdockAsk(url, model, apiKey string) askFunc {
 				} `json:"choices"`
 			}
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-				return fmt.Errorf("langdock: unexpected stream data: %w", err)
+				return fmt.Errorf("%s: unexpected stream data: %w", provider, err)
 			}
 			if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
-				return fmt.Errorf("langdock: %s", chunk.Error)
+				return fmt.Errorf("%s: %s", provider, chunk.Error)
 			}
 			for _, c := range chunk.Choices {
 				content.WriteString(c.Delta.Content)
@@ -104,11 +115,24 @@ func langdockAsk(url, model, apiKey string) askFunc {
 		case finish == "length":
 			return fmt.Errorf("answer cut off")
 		case finish == "":
-			return errors.New("langdock: stream ended before the answer was complete")
+			return fmt.Errorf("%s: stream ended before the answer was complete", provider)
 		}
-		if err := json.Unmarshal([]byte(content.String()), dest); err != nil {
+		if err := json.Unmarshal([]byte(stripThink(content.String())), dest); err != nil {
 			return fmt.Errorf("parse answer: %w", err)
 		}
 		return nil
 	}
+}
+
+// stripThink drops the leading <think>…</think> block that Qwen and other
+// reasoning models write into the content when the server runs no reasoning
+// parser (vLLM needs --reasoning-parser for that).
+func stripThink(s string) string {
+	t := strings.TrimSpace(s)
+	if rest, ok := strings.CutPrefix(t, "<think>"); ok {
+		if _, after, found := strings.Cut(rest, "</think>"); found {
+			return strings.TrimSpace(after)
+		}
+	}
+	return s
 }

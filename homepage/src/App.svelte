@@ -23,8 +23,9 @@
     ['Writes', 'never', 'never: write tools are not even shown', 'posted first; with an approver, run only after their ✔️'],
   ]
 
-  let backend = $state<'claude-code' | 'langdock'>('claude-code')
+  let backend = $state<'claude-code' | 'langdock' | 'openai'>('claude-code')
   const langdock = $derived(backend === 'langdock')
+  const openai = $derived(backend === 'openai')
 
   const config = `# itakeit's config.yaml, plus:
 agent:
@@ -46,6 +47,15 @@ agent:
   langdock_region: eu          # eu (default) or us`
 
   const langdockRun = `docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e LANGDOCK_API_KEY -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" ghcr.io/nice-pink/itakeit-agent-langdock:latest`
+
+  const openaiConfig = `agent:
+  backend: openai
+  model: gpt-5.5                # a model ID of your OpenAI account, or of your own server
+  # openai_base_url: http://qwen.internal:8000/v1   # a self-hosted server, see below`
+
+  const openaiRun = `docker run -d --name itakeit-agent --restart unless-stopped -e AGENT_SLACK_BOT_TOKEN -e AGENT_SLACK_APP_TOKEN -e OPENAI_API_KEY -v "$PWD/config.yaml:/config/config.yaml:ro" -v "$PWD/knowledge:/config/knowledge:ro" ghcr.io/nice-pink/itakeit-agent-openai:latest`
+
+  const openaiBuild = `git clone https://github.com/nice-pink/itakeit-agent.git && docker build -f itakeit-agent/Dockerfile.openai -t itakeit-agent-openai itakeit-agent`
 
   const langdockBuild = `git clone https://github.com/nice-pink/itakeit-agent.git && docker build -f itakeit-agent/Dockerfile.langdock -t itakeit-agent-langdock itakeit-agent`
 
@@ -96,6 +106,7 @@ agent:
     <ul class="backends" aria-label="Supported backends">
       <li class="badge">claude-code</li>
       <li class="badge">langdock</li>
+      <li class="badge">openai</li>
     </ul>
     <nav>
       <a href="#how">How it works</a>
@@ -161,10 +172,11 @@ agent:
     <h2>Setup</h2>
     <div class="picker" role="radiogroup" aria-label="Model backend">
       <span>Backend</span>
-      <label class:on={!langdock}><input type="radio" name="backend" value="claude-code" bind:group={backend} />claude-code</label>
+      <label class:on={!langdock && !openai}><input type="radio" name="backend" value="claude-code" bind:group={backend} />claude-code</label>
       <label class:on={langdock}><input type="radio" name="backend" value="langdock" bind:group={backend} />langdock</label>
+      <label class:on={openai}><input type="radio" name="backend" value="openai" bind:group={backend} />openai</label>
     </div>
-    <p class="sub">About fifteen minutes. You need a channel running <a href={itakeit}>itakeit</a>, {#if langdock}a Langdock API key{:else}a Claude login{/if}, and a machine that runs Docker.</p>
+    <p class="sub">About fifteen minutes. You need a channel running <a href={itakeit}>itakeit</a>, {#if langdock}a Langdock API key{:else if openai}an OpenAI API key, or your own OpenAI-compatible server{:else}a Claude login{/if}, and a machine that runs Docker.</p>
 
     <ol class="steps">
       <li>
@@ -188,15 +200,19 @@ agent:
         <h3>Add the agent block to config.yaml</h3>
         <p>Start from itakeit's own <code>config.yaml</code>, so both apps agree on the channels and the emoji, and add an <code>agent</code> block. itakeit ignores it, so both can mount the same file. <code>skills</code> is what the agent takes; <code>knowledge</code> files are optional. Every other setting is in <a href="{repo}/blob/main/config.example.yaml">config.example.yaml</a>.</p>
         <Code code={config} label="config.yaml" />
-        {#if langdock}
-          <p>Add the backend keys to the same block. Langdock has no tools, so leave out <code>tools</code> and <code>mcp_servers</code>, and keep the default mode.</p>
-          <Code code={langdockConfig} label="config.yaml" />
+        {#if langdock || openai}
+          <p>Add the backend keys to the same block. {langdock ? 'Langdock' : 'OpenAI'} has no tools, so leave out <code>tools</code> and <code>mcp_servers</code>, and keep the default mode.</p>
+          <Code code={langdock ? langdockConfig : openaiConfig} label="config.yaml" />
         {/if}
       </li>
       <li>
         {#if langdock}
           <h3>Get a Langdock API key</h3>
           <p>Create an API key in your Langdock workspace and keep it as <code>LANGDOCK_API_KEY</code>. Set <code>model</code> to a model ID from the workspace, and <code>langdock_region</code> to <code>eu</code> or <code>us</code> to match it. The agent calls Langdock’s OpenAI-compatible API, so any model of the workspace works.</p>
+        {:else if openai}
+          <h3>Get an OpenAI API key</h3>
+          <p>Create an API key in your OpenAI account and keep it as <code>OPENAI_API_KEY</code>. Set <code>model</code> to a model ID that supports strict JSON schema output. The agent calls the chat completions API.</p>
+          <p><b>Other models.</b> Set <code>openai_base_url</code> to any OpenAI-compatible server, such as vLLM, SGLang, Ollama or llama.cpp serving Qwen, Llama or Mistral, and <code>model</code> to the name that server uses. <code>OPENAI_API_KEY</code> is then optional and no key is sent without it. Reasoning models such as Qwen3 write a <code>&lt;think&gt;</code> block, which the agent drops. On vLLM start it with <code>--reasoning-parser qwen3</code> so the thinking is split off cleanly.</p>
         {:else}
           <h3>Log in to Claude</h3>
           <p>On any machine with Claude Code, run <code>claude setup-token</code> once and keep the token as <code>CLAUDE_CODE_OAUTH_TOKEN</code>. Usage counts against that Claude plan. To bill the API instead, set <code>backend: api</code> and pass <code>-e ANTHROPIC_API_KEY</code> in place of the token; tools need the default <code>claude-code</code> backend.</p>
@@ -204,12 +220,12 @@ agent:
       </li>
       <li>
         <h3>Run the container</h3>
-        {#if langdock}
-          <p>Export the three tokens, then start the Langdock image from the directory with <code>config.yaml</code> and your knowledge files. It has no Claude Code CLI and no Node, and refuses <code>agent.tools</code>, <code>agent.mcp_servers</code> and mode <code>fix</code>. Memory needs the <code>-mem</code> image.</p>
-          <Code code={'export AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... LANGDOCK_API_KEY=...'} label="shell" />
-          <Code code={langdockRun} label="shell" />
-          <p>Or build it yourself, and run <code>itakeit-agent-langdock</code> in place of the image name above:</p>
-          <Code code={langdockBuild} label="shell" />
+        {#if langdock || openai}
+          <p>Export the three tokens, then start the {langdock ? 'Langdock' : 'OpenAI'} image from the directory with <code>config.yaml</code> and your knowledge files. It has no Claude Code CLI and no Node, and refuses <code>agent.tools</code>, <code>agent.mcp_servers</code> and mode <code>fix</code>. Memory needs the <code>-mem</code> image.</p>
+          <Code code={langdock ? 'export AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... LANGDOCK_API_KEY=...' : 'export AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... OPENAI_API_KEY=...'} label="shell" />
+          <Code code={langdock ? langdockRun : openaiRun} label="shell" />
+          <p>Or build it yourself, and run <code>itakeit-agent-{langdock ? 'langdock' : 'openai'}</code> in place of the image name above:</p>
+          <Code code={langdock ? langdockBuild : openaiBuild} label="shell" />
         {:else}
           <p>Export the three tokens, then start the published image from the directory with <code>config.yaml</code> and your knowledge files. It is built for amd64 and arm64; <code>latest</code> follows <code>main</code>, and releases are tagged.</p>
           <Code code={'export AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...'} label="shell" />

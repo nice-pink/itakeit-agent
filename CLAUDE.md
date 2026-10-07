@@ -10,7 +10,7 @@ Behaviour, setup, config keys and the security caveats are documented in `README
 - All tests: `go test ./...`
 - One test: `go test ./pkg/agent -run TestNeedsInfoResumesOnAnswer -v`
 - Run locally: `AGENT_SLACK_BOT_TOKEN=xoxb-... AGENT_SLACK_APP_TOKEN=xapp-... ./bin/itakeit-agent -config config.yaml` (`-debug` logs raw Socket Mode traffic). `config.yaml` is gitignored; start from `config.example.yaml`.
-- Image: `docker build -t itakeit-agent .`, with memory `docker build -f Dockerfile.mem -t itakeit-agent-mem .` (keep both Dockerfiles' runtime stages in step). The runtime stage pins the Claude Code CLI with `CLAUDE_CODE_VERSION`. Bump it only after checking the CLI flags and the `claude -p --output-format json` fields the worker reads still match.
+- Image: `docker build -t itakeit-agent .`, with memory `docker build -f Dockerfile.mem -t itakeit-agent-mem .`, for the HTTP backends `Dockerfile.langdock` and `Dockerfile.openai` (keep all four Dockerfiles' runtime stages in step: `Dockerfile.langdock` and `Dockerfile.openai` are identical apart from comments). The runtime stage pins the Claude Code CLI with `CLAUDE_CODE_VERSION`. Bump it only after checking the CLI flags and the `claude -p --output-format json` fields the worker reads still match.
 
 ## Architecture
 

@@ -116,6 +116,12 @@ func newWorker(ctx context.Context, s agent.Settings, dir string, mem *worker.Me
 			return nil, errors.New("agent.backend langdock needs LANGDOCK_API_KEY")
 		}
 		w = worker.NewLangdock(s.LangdockRegion, s.Model, key, s.Skills)
+	case agent.BackendOpenAI:
+		key := os.Getenv("OPENAI_API_KEY")
+		if key == "" && s.OpenAIBaseURL == agent.DefaultOpenAIBaseURL {
+			return nil, errors.New("agent.backend openai needs OPENAI_API_KEY (only a custom agent.openai_base_url may go without)")
+		}
+		w = worker.NewOpenAI(s.OpenAIBaseURL, s.Model, key, s.Skills)
 	default:
 		email, err := claudeLogin(ctx, s.ClaudeBin, s.Env)
 		if err != nil {

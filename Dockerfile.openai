@@ -1,0 +1,26 @@
+FROM cgr.dev/chainguard/go:latest-dev AS builder
+
+LABEL org.opencontainers.image.source="https://github.com/nice-pink/itakeit-agent"
+
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 ./build
+
+# For backend: openai only. It calls the OpenAI-compatible chat completions HTTP API (OpenAI, or a self-hosted server such as vLLM via openai_base_url), so the image has no
+# Claude Code CLI and no Node, and agent.tools, agent.mcp_servers and mode fix
+# are refused by the config check. A config with backend claude-code fails its
+# start probe here, since there is no claude binary. Static carries the CA
+# certificates the Go binary needs for Slack and the model API, and runs as a
+# non-root user. Like Dockerfile, no init: as PID 1 it would hold the Slack
+# tokens in a readable /proc/1/environ.
+FROM cgr.dev/chainguard/static:latest
+
+LABEL org.opencontainers.image.source="https://github.com/nice-pink/itakeit-agent"
+
+COPY --from=builder /app/bin/itakeit-agent /app/itakeit-agent
+# No poma-memory here either: with agent.memory enabled the agent stops and
+# names the image built from Dockerfile.mem.
+ENV ITAKEIT_AGENT_IMAGE=itakeit-agent
+ENTRYPOINT [ "/app/itakeit-agent", "-config", "/config/config.yaml" ]
