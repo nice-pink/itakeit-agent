@@ -1,14 +1,32 @@
 name: image
 
-# homepage/ is outside the image (.dockerignore), so changes to it alone build nothing.
+# Only what the image is built from triggers a build: Go code and its tests (the Dockerfile
+# runs ./build), go.mod/go.sum, the build script, the Dockerfiles, .dockerignore and this file.
+# Docs, homepage, examples, assets and license changes alone build nothing.
 # Path filters do not apply to tag pushes, so a release tag always builds.
 on:
   push:
     branches: [main]
     tags: ['v*']
-    paths-ignore: ['homepage/**', 'docs/**', '**.md']
+    paths:
+      - 'cmd/**'
+      - 'pkg/**'
+      - go.mod
+      - go.sum
+      - build
+      - 'Dockerfile*'
+      - .dockerignore
+      - .github/workflows/image.yaml
   pull_request:
-    paths-ignore: ['homepage/**', 'docs/**', '**.md']
+    paths:
+      - 'cmd/**'
+      - 'pkg/**'
+      - go.mod
+      - go.sum
+      - build
+      - 'Dockerfile*'
+      - .dockerignore
+      - .github/workflows/image.yaml
 
 permissions:
   contents: read
