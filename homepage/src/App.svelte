@@ -171,7 +171,6 @@ agent:
   <section id="setup" class="wrap setup">
     <h2>Setup</h2>
     <div class="picker" role="radiogroup" aria-label="Model backend">
-      <span>Backend</span>
       <label class:on={!langdock && !openai}><input type="radio" name="backend" value="claude-code" bind:group={backend} />claude-code</label>
       <label class:on={langdock}><input type="radio" name="backend" value="langdock" bind:group={backend} />langdock</label>
       <label class:on={openai}><input type="radio" name="backend" value="openai" bind:group={backend} />openai</label>
@@ -356,7 +355,6 @@ agent:
   .steps h3 { margin: 0 0 0.4rem; font-size: 1.2rem; }
   .steps p { margin: 0 0 0.6rem; }
   .picker { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.8rem; }
-  .picker span { font-weight: 600; margin-right: 0.3rem; }
   .picker label { cursor: pointer; font: 600 0.9rem var(--mono); padding: 0.3rem 0.8rem; background: var(--panel); border: 2px solid var(--ink); }
   .picker label.on { background: var(--green); color: #fff; box-shadow: 3px 3px 0 var(--ink); }
   .picker input { position: absolute; opacity: 0; pointer-events: none; }
